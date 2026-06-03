@@ -4,16 +4,22 @@ import { ref } from 'vue'
 defineProps({
   canExport: Boolean,
   isFullscreen: Boolean,
+  logoSrc: {
+    type: String,
+    required: true,
+  },
 })
 
-defineEmits(['add', 'list', 'delete', 'lottery', 'fullscreen', 'download'])
+defineEmits(['add', 'list', 'delete', 'lottery', 'fullscreen', 'download', 'home'])
 
 const isMobileMenuOpen = ref(false)
 </script>
 
 <template>
   <nav class="toolbar" :class="{ open: isMobileMenuOpen }" aria-label="工具列">
-    <slot name="start"></slot>
+    <a href="#" class="toolbar-logo" aria-label="回到首頁" @click.prevent="$emit('home')">
+      <img :src="logoSrc" alt="" />
+    </a>
     <button
       type="button"
       class="toolbar-menu-toggle"

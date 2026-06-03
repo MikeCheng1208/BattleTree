@@ -5,6 +5,7 @@ import BracketSetup from './components/BracketSetup.vue'
 import BracketView from './components/BracketView.vue'
 import LotteryModal from './components/LotteryModal.vue'
 import Toolbar from './components/Toolbar.vue'
+import battleTreeLogo from './assets/logo.svg'
 import { useBracketExport } from './composables/useBracketExport'
 import { useBrackets } from './composables/useBrackets'
 
@@ -15,6 +16,7 @@ const {
   addBracket,
   selectBracket,
   deleteBracket,
+  resetCurrentBracket,
   updateCurrent,
   setPlayerCount,
   updatePlayer,
@@ -26,11 +28,15 @@ const {
   updateLottery,
 } = useBrackets()
 
+const VIEW_STORAGE = 'battletree:view'
 const showList = ref(false)
 const showLottery = ref(false)
+const showHomeConfirm = ref(false)
 const exportTarget = ref(null)
 const bracketViewRef = ref(null)
 const generationErrors = ref([])
+const showHome = ref(localStorage.getItem(VIEW_STORAGE) !== 'app')
+const homeLeaving = ref(false)
 
 const canExport = computed(() => currentBracket.value?.status === 'ready')
 const exportApi = useBracketExport(
@@ -40,8 +46,9 @@ const exportApi = useBracketExport(
 )
 const isFullscreen = computed(() => exportApi.isFullscreen.value)
 
-function updateName(event) {
-  updateCurrent({ name: event.target.value || '新對戰表' })
+function updateName(value) {
+  const name = typeof value === 'string' ? value : value.target.value
+  updateCurrent({ name: name || '新對戰表' })
 }
 
 function handleGenerate() {
@@ -68,31 +75,64 @@ function handleReshuffle() {
     generateBracket('random')
   }
 }
+
+function startBattle() {
+  if (homeLeaving.value) return
+  homeLeaving.value = true
+  window.setTimeout(() => {
+    localStorage.setItem(VIEW_STORAGE, 'app')
+    showHome.value = false
+    homeLeaving.value = false
+  }, 1320)
+}
+
+function requestHome() {
+  showHomeConfirm.value = true
+}
+
+function returnHome({ preserve }) {
+  if (!preserve) resetCurrentBracket()
+  showHomeConfirm.value = false
+  localStorage.setItem(VIEW_STORAGE, 'home')
+  showHome.value = true
+  homeLeaving.value = false
+}
 </script>
 
 <template>
   <main class="app-shell">
+    <section v-if="showHome" class="home-screen" :class="{ leaving: homeLeaving }">
+      <div class="home-exit-layers" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+      <div class="home-brand" aria-label="BattleTree">
+        <img :src="battleTreeLogo" alt="" />
+      </div>
+      <button type="button" class="home-start" :disabled="homeLeaving" @click="startBattle">
+        開始對戰
+      </button>
+    </section>
+
+    <template v-else>
     <Toolbar
       :can-export="canExport"
       :is-fullscreen="isFullscreen"
+      :logo-src="battleTreeLogo"
       @add="addBracket"
       @list="showList = true"
       @delete="handleDelete()"
       @lottery="showLottery = true"
       @fullscreen="exportApi.toggle"
       @download="exportApi.downloadJpeg"
-    >
-      <template #start>
-        <label class="title-editor">
-          <span>比賽名稱</span>
-          <input :value="currentBracket?.name" type="text" @input="updateName" />
-        </label>
-      </template>
-    </Toolbar>
+      @home="requestHome"
+    />
 
     <section v-if="currentBracket?.status === 'setup'" class="content-wrap">
       <BracketSetup
         :bracket="currentBracket"
+        @update-name="updateName"
         @set-player-count="setPlayerCount"
         @update-player="updatePlayer"
         @set-pairing-mode="setPairingMode"
@@ -139,5 +179,27 @@ function handleReshuffle() {
       @close="showLottery = false"
       @update-lottery="updateLottery"
     />
+
+    <div v-if="showHomeConfirm" class="modal-backdrop">
+      <section class="modal-panel compact home-confirm" role="dialog" aria-modal="true">
+        <header class="modal-header">
+          <h2>回到首頁</h2>
+          <button type="button" class="icon-button" aria-label="關閉" @click="showHomeConfirm = false">
+            ×
+          </button>
+        </header>
+        <p>是否要保留目前的輸入內容？</p>
+        <div class="stage-actions">
+          <button type="button" class="primary-action" @click="returnHome({ preserve: true })">
+            保留內容
+          </button>
+          <button type="button" class="secondary-action" @click="returnHome({ preserve: false })">
+            不保留，重置
+          </button>
+          <button type="button" class="ghost" @click="showHomeConfirm = false">取消</button>
+        </div>
+      </section>
+    </div>
+    </template>
   </main>
 </template>

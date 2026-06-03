@@ -9,7 +9,14 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['set-player-count', 'update-player', 'set-pairing-mode', 'set-group-count', 'generate'])
+const emit = defineEmits([
+  'update-name',
+  'set-player-count',
+  'update-player',
+  'set-pairing-mode',
+  'set-group-count',
+  'generate',
+])
 const GROUP_OPTIONS = [1, 2, 4, 8]
 
 const playerCount = ref(props.bracket.players.length)
@@ -39,6 +46,15 @@ function generate() {
 
 <template>
   <section class="setup-panel">
+    <label class="field setup-title-field">
+      <span>比賽名稱</span>
+      <input
+        :value="bracket.name"
+        type="text"
+        @input="emit('update-name', $event.target.value)"
+      />
+    </label>
+
     <div class="setup-grid">
       <label class="field">
         <span>參賽人數</span>

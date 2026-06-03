@@ -24,7 +24,7 @@ export function useBracketExport(targetRef, bracketRef, downloadTargetRef = targ
     if (!target) return
     const dataUrl = await toJpeg(target, {
       quality: 0.95,
-      backgroundColor: '#f7f5ef',
+      backgroundColor: '#f4f4f4',
       pixelRatio: 2,
     })
     const link = document.createElement('a')

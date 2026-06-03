@@ -28,22 +28,38 @@ export function useLottery(bracketRef, updateLottery) {
     return roundIndex === null ? [] : getLosersByRound(bracket, roundIndex)
   }
 
-  const previewPool = computed(() => getPoolByFilter(unref(bracketRef)?.lottery?.poolFilter ?? 'all'))
+  const candidatePool = computed(() => getPoolByFilter(unref(bracketRef)?.lottery?.poolFilter ?? 'all'))
+  const excludedIds = computed(() => new Set(unref(bracketRef)?.lottery?.excludedIds ?? []))
+  const previewPool = computed(() => candidatePool.value.filter((id) => !excludedIds.value.has(id)))
 
   function setFilter(poolFilter) {
     updateLottery({
       poolFilter,
       confirmed: false,
+      excludedIds: [],
       pool: [],
       drawn: [],
     })
   }
 
+  function toggleCandidate(playerId) {
+    const bracket = unref(bracketRef)
+    if (!bracket || bracket.lottery?.confirmed) return
+    const excluded = new Set(bracket.lottery?.excludedIds ?? [])
+    if (excluded.has(playerId)) {
+      excluded.delete(playerId)
+    } else {
+      excluded.add(playerId)
+    }
+    updateLottery({
+      excludedIds: [...excluded],
+    })
+  }
+
   function confirmPool() {
-    const filter = unref(bracketRef)?.lottery?.poolFilter ?? 'all'
     updateLottery({
       confirmed: true,
-      pool: getPoolByFilter(filter),
+      pool: previewPool.value,
       drawn: [],
     })
   }
@@ -51,6 +67,7 @@ export function useLottery(bracketRef, updateLottery) {
   function resetPool() {
     updateLottery({
       confirmed: false,
+      excludedIds: [],
       pool: [],
       drawn: [],
     })
@@ -118,8 +135,11 @@ export function useLottery(bracketRef, updateLottery) {
     isRolling,
     playerMap,
     filterOptions,
+    candidatePool,
     previewPool,
+    excludedIds,
     setFilter,
+    toggleCandidate,
     confirmPool,
     resetPool,
     drawOne,

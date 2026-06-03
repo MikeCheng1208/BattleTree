@@ -23,6 +23,7 @@ function createLotteryState() {
   return {
     poolFilter: 'all',
     confirmed: false,
+    excludedIds: [],
     pool: [],
     drawn: [],
   }
@@ -147,6 +148,12 @@ export function useBrackets() {
       return
     }
     if (currentId.value === id) currentId.value = ids[0]
+  }
+
+  function resetCurrentBracket() {
+    const bracket = currentBracket.value
+    if (!bracket) return
+    persist(createBracket({ id: bracket.id, createdAt: bracket.createdAt }))
   }
 
   function setPlayerCount(count) {
@@ -283,6 +290,7 @@ export function useBrackets() {
     addBracket,
     selectBracket,
     deleteBracket,
+    resetCurrentBracket,
     updateCurrent,
     setPlayerCount,
     updatePlayer,
