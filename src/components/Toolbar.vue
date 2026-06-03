@@ -30,10 +30,17 @@ const isMobileMenuOpen = ref(false)
       <button type="button" @click="$emit('list')">選取</button>
       <button type="button" @click="$emit('delete')">刪除</button>
       <button type="button" @click="$emit('lottery')">抽籤</button>
-      <button type="button" :disabled="!canExport" @click="$emit('fullscreen')">
+      <button
+        type="button"
+        class="fullscreen-action"
+        :disabled="!canExport"
+        @click="$emit('fullscreen')"
+      >
         {{ isFullscreen ? '離開全螢幕' : '全螢幕' }}
       </button>
-      <button type="button" :disabled="!canExport" @click="$emit('download')">下載 JPG</button>
+      <button type="button" :disabled="!canExport" @click="$emit('download')">
+        下載<span class="desktop-label"> JPG</span>
+      </button>
     </div>
   </nav>
 </template>

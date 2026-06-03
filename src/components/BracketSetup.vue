@@ -9,10 +9,14 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['set-player-count', 'update-player', 'set-pairing-mode', 'generate'])
+const emit = defineEmits(['set-player-count', 'update-player', 'set-pairing-mode', 'set-group-count', 'generate'])
+const GROUP_OPTIONS = [1, 2, 4, 8]
 
 const playerCount = ref(props.bracket.players.length)
 const submitErrors = ref([])
+const availableGroupOptions = computed(() =>
+  GROUP_OPTIONS.filter((count) => count <= Math.floor(props.bracket.players.length / 2)),
+)
 
 watch(
   () => props.bracket.players.length,
@@ -42,7 +46,6 @@ function generate() {
           v-model.number="playerCount"
           type="number"
           min="2"
-          max="64"
           @change="applyPlayerCount"
         />
       </label>
@@ -63,6 +66,18 @@ function generate() {
           隨機抽籤
         </button>
       </div>
+
+      <div class="segmented" role="radiogroup" aria-label="分組數">
+        <button
+          v-for="count in availableGroupOptions"
+          :key="count"
+          type="button"
+          :class="{ active: bracket.groupCount === count }"
+          @click="emit('set-group-count', count)"
+        >
+          {{ count === 1 ? '不分組' : `${count} 組` }}
+        </button>
+      </div>
     </div>
 
     <div class="player-editor">
@@ -71,13 +86,7 @@ function generate() {
         <span>選手姓名</span>
       </div>
       <label v-for="player in bracket.players" :key="player.id" class="player-row">
-        <input
-          :value="player.seed"
-          type="number"
-          min="1"
-          :max="bracket.players.length"
-          @input="emit('update-player', player.id, { seed: Number($event.target.value) })"
-        />
+        <span class="seed-display">#{{ player.seed }}</span>
         <input
           :value="player.name"
           type="text"

@@ -1,6 +1,6 @@
 import { computed, nextTick, ref } from 'vue'
 
-const MIN_SCALE = 0.35
+const MIN_SCALE = 0.08
 const MAX_SCALE = 2
 const STEP = 0.1
 
@@ -18,6 +18,7 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
   const translateY = ref(0)
   const isDragging = ref(false)
   const dragStart = ref({ x: 0, y: 0, translateX: 0, translateY: 0 })
+  const hasManualViewChange = ref(false)
   const activePointers = new Map()
   let pinchStart = null
 
@@ -49,6 +50,7 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
     if (!viewport) return
     const rect = viewport.getBoundingClientRect()
     setScaleAroundPoint(scale.value + delta, rect.left + rect.width / 2, rect.top + rect.height / 2)
+    hasManualViewChange.value = true
   }
 
   function zoomIn() {
@@ -63,9 +65,11 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
     scale.value = 1
     translateX.value = 0
     translateY.value = 0
+    hasManualViewChange.value = true
   }
 
-  async function fitToView() {
+  async function fitToView({ force = true } = {}) {
+    if (!force && hasManualViewChange.value) return
     await nextTick()
     const viewport = viewportRef.value
     const board = boardRef.value
@@ -82,6 +86,7 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
     scale.value = nextScale
     translateX.value = (viewportRect.width - boardWidth * nextScale) / 2
     translateY.value = (viewportRect.height - boardHeight * nextScale) / 2
+    hasManualViewChange.value = false
   }
 
   function getPointerGesture() {
@@ -117,6 +122,7 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
     scale.value = nextScale
     translateX.value = gesture.centerX - rect.left - pinchStart.contentX * nextScale
     translateY.value = gesture.centerY - rect.top - pinchStart.contentY * nextScale
+    hasManualViewChange.value = true
   }
 
   function syncDragStartToPointer() {
@@ -156,6 +162,7 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
     if (!isDragging.value) return
     translateX.value = dragStart.value.translateX + event.clientX - dragStart.value.x
     translateY.value = dragStart.value.translateY + event.clientY - dragStart.value.y
+    hasManualViewChange.value = true
   }
 
   function onPointerUp(event) {
@@ -178,6 +185,7 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
     const direction = event.deltaY > 0 ? -1 : 1
     const delta = direction * STEP
     setScaleAroundPoint(scale.value + delta, event.clientX, event.clientY)
+    hasManualViewChange.value = true
   }
 
   return {

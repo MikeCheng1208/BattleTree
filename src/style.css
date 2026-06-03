@@ -92,6 +92,10 @@ input {
   justify-content: flex-end;
 }
 
+.desktop-label {
+  display: inline;
+}
+
 .toolbar-menu-toggle {
   display: none;
   place-items: center;
@@ -270,6 +274,18 @@ input {
   font-weight: 700;
 }
 
+.seed-display {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  background: rgba(255, 253, 248, 0.62);
+  font-weight: 800;
+}
+
 .error-list {
   margin: 0;
   padding: 12px 16px 12px 28px;
@@ -349,6 +365,35 @@ input {
   pointer-events: none;
 }
 
+.view-controls {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: min(360px, calc(100% - 24px));
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(255, 253, 248, 0.9);
+  box-shadow: 0 10px 28px rgba(48, 42, 31, 0.08);
+  pointer-events: auto;
+}
+
+.view-controls button {
+  min-height: 34px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.view-controls button.active {
+  border-color: var(--accent);
+  color: #fff;
+  background: var(--accent);
+}
+
 .zoom-controls {
   display: flex;
   flex-wrap: wrap;
@@ -412,6 +457,10 @@ input {
 
 .bracket-board {
   position: relative;
+  --match-width: 210px;
+  --round-gap: 72px;
+  --match-gap: 36px;
+  --match-row-size: 170px;
   min-width: 920px;
   width: max-content;
   min-height: 620px;
@@ -465,18 +514,132 @@ input {
   z-index: 1;
   display: flex;
   flex-direction: column;
-  gap: 72px;
+  gap: var(--round-gap);
 }
 
 .round-row {
   display: grid;
-  grid-template-columns: repeat(var(--match-count), 210px);
-  gap: 36px;
+  grid-template-columns: repeat(var(--base-match-count), var(--match-width));
+  gap: var(--match-gap);
   justify-content: center;
 }
 
 .match-shell {
-  width: 210px;
+  position: relative;
+  width: var(--match-width);
+  justify-self: center;
+}
+
+.group-marker {
+  position: absolute;
+  left: 0;
+  top: -34px;
+  z-index: 2;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid rgba(15, 118, 110, 0.28);
+  border-radius: 999px;
+  color: var(--accent);
+  background: rgba(255, 253, 248, 0.94);
+  box-shadow: 0 8px 20px rgba(48, 42, 31, 0.08);
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.group-marker span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.bracket-board.view-columns .round-stack {
+  flex-direction: row;
+  align-items: start;
+}
+
+.bracket-board.view-columns .round-row {
+  grid-template-columns: var(--match-width);
+  grid-template-rows: repeat(var(--base-match-count), var(--match-row-size));
+  row-gap: 18px;
+  column-gap: 0;
+}
+
+.bracket-board.view-columns .match-shell {
+  align-self: center;
+}
+
+.grouped-board {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: max-content;
+  gap: 18px;
+  align-items: start;
+  justify-content: center;
+}
+
+.group-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  max-width: 920px;
+}
+
+.group-tabs button {
+  min-height: 34px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.group-tabs button.active {
+  border-color: var(--accent);
+  color: #fff;
+  background: var(--accent);
+}
+
+.group-section,
+.final-section {
+  position: relative;
+  display: grid;
+  gap: 20px;
+  padding: 42px 28px 28px;
+  border: 1px solid rgba(222, 216, 203, 0.72);
+  border-radius: var(--radius);
+  background: rgba(255, 253, 248, 0.32);
+}
+
+.final-section {
+  justify-self: center;
+}
+
+.group-title {
+  position: absolute;
+  top: 10px;
+  left: 14px;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--accent);
+}
+
+.group-title strong {
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.group-title span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.final-title {
+  color: var(--gold);
 }
 
 .match-card {
@@ -752,11 +915,29 @@ input {
   }
 
   .toolbar.open .toolbar-actions {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .toolbar-actions button {
+    min-width: 0;
+    padding: 0 6px;
+    font-size: 13px;
+    text-align: center;
+  }
+
+  .desktop-label {
+    display: none;
   }
 
   .toolbar-menu-toggle {
     display: grid;
+  }
+
+  .fullscreen-action,
+  .fullscreen-exit {
+    display: none;
   }
 
   .title-editor {
@@ -769,9 +950,13 @@ input {
 
   .setup-grid,
   .player-editor-head,
-  .player-row,
   .list-item {
     grid-template-columns: 1fr;
+  }
+
+  .player-editor-head,
+  .player-row {
+    grid-template-columns: minmax(56px, 2fr) minmax(0, 8fr);
   }
 
   .export-surface {
@@ -782,6 +967,10 @@ input {
     min-height: calc(100svh - 132px);
   }
 
+  .manual-zoom-control {
+    display: none;
+  }
+
   .board-controls {
     left: 8px;
     right: 8px;
@@ -790,5 +979,11 @@ input {
 
   .zoom-controls {
     justify-content: center;
+  }
+
+  .zoom-controls button {
+    min-height: 40px;
+    padding: 0 6px;
+    font-size: 13px;
   }
 }

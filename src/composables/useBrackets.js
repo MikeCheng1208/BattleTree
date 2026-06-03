@@ -2,14 +2,22 @@ import { computed } from 'vue'
 import { useStorage } from '@vueuse/core'
 import {
   buildInitialPlayers,
+  createGroupedSlots,
   createId,
-  createSlots,
   sanitizeResults,
   validatePlayers,
 } from './useBracketEngine'
 
 const STORAGE_BRACKETS = 'battletree:brackets'
 const STORAGE_CURRENT_ID = 'battletree:currentId'
+const DEFAULT_PLAYER_COUNT = 4
+const GROUP_COUNT_OPTIONS = [1, 2, 4, 8]
+
+function normalizeGroupCount(count, playerCount = Infinity) {
+  const requested = Number(count) || 1
+  const maxGroups = Math.max(1, Math.floor(playerCount / 2))
+  return [...GROUP_COUNT_OPTIONS].reverse().find((option) => option <= requested && option <= maxGroups) ?? 1
+}
 
 function createLotteryState() {
   return {
@@ -29,9 +37,10 @@ function createBracket(overrides = {}) {
     createdAt: now,
     updatedAt: now,
     status: 'setup',
-    players: buildInitialPlayers(8),
+    players: buildInitialPlayers(DEFAULT_PLAYER_COUNT),
     pairingMode: 'order',
-    bracketSize: 8,
+    groupCount: 1,
+    bracketSize: DEFAULT_PLAYER_COUNT,
     slots: [],
     results: {},
     lottery: createLotteryState(),
@@ -54,6 +63,7 @@ function normalizeBracket(bracket) {
     },
   }
   normalized.bracketSize = normalized.slots.length || normalized.bracketSize || normalized.players.length
+  normalized.groupCount = normalizeGroupCount(normalized.groupCount, normalized.players.length)
   return normalized
 }
 
@@ -140,7 +150,7 @@ export function useBrackets() {
   }
 
   function setPlayerCount(count) {
-    const safeCount = Math.max(2, Math.min(64, Number(count) || 2))
+    const safeCount = Math.max(2, Number(count) || 2)
     updateCurrent((bracket) => {
       const existing = bracket.players ?? []
       const players = Array.from({ length: safeCount }, (_, index) => {
@@ -153,6 +163,7 @@ export function useBrackets() {
         ...bracket,
         status: 'setup',
         players,
+        groupCount: normalizeGroupCount(bracket.groupCount, players.length),
         slots: [],
         results: {},
         lottery: createLotteryState(),
@@ -180,6 +191,16 @@ export function useBrackets() {
     }))
   }
 
+  function setGroupCount(groupCount) {
+    updateCurrent((bracket) => ({
+      ...bracket,
+      groupCount: normalizeGroupCount(groupCount, bracket.players.length),
+      status: bracket.status === 'ready' ? 'setup' : bracket.status,
+      slots: bracket.status === 'ready' ? [] : bracket.slots,
+      results: bracket.status === 'ready' ? {} : bracket.results,
+    }))
+  }
+
   function generateBracket(forceMode) {
     const bracket = currentBracket.value
     if (!bracket) return { ok: false, errors: ['找不到目前對戰表'] }
@@ -187,12 +208,14 @@ export function useBrackets() {
     if (errors.length) return { ok: false, errors }
 
     const pairingMode = forceMode ?? bracket.pairingMode
-    const { bracketSize, slots } = createSlots(bracket.players, pairingMode)
+    const groupCount = normalizeGroupCount(bracket.groupCount, bracket.players.length)
+    const { slotsData } = createGroupedSlots(bracket.players, pairingMode, groupCount)
     persist({
       ...bracket,
       pairingMode,
-      bracketSize,
-      slots,
+      groupCount,
+      bracketSize: slotsData.bracketSize,
+      slots: slotsData.slots,
       status: 'ready',
       results: {},
       lottery: createLotteryState(),
@@ -264,6 +287,7 @@ export function useBrackets() {
     setPlayerCount,
     updatePlayer,
     setPairingMode,
+    setGroupCount,
     generateBracket,
     setResult,
     updateScore,

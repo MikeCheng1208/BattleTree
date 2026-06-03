@@ -32,7 +32,6 @@ export function sortPlayersBySeed(players) {
 export function validatePlayers(players) {
   const errors = []
   if (players.length < 2) errors.push('至少需要 2 位選手')
-  if (players.length > 64) errors.push('最多支援 64 位選手')
 
   const seen = new Set()
   players.forEach((player, index) => {
@@ -49,18 +48,74 @@ export function validatePlayers(players) {
 }
 
 export function createSlots(players, pairingMode = 'order') {
+  return createGroupedSlots(players, pairingMode, 1).slotsData
+}
+
+export function createGroupedSlots(players, pairingMode = 'order', groupCount = 1) {
   const bracketSize = getBracketSize(players.length)
   const orderedPlayers = pairingMode === 'random' ? shufflePlayers(players) : sortPlayersBySeed(players)
-  const seedOrder = getSeedOrder(bracketSize)
-  const slots = Array.from({ length: bracketSize }, () => null)
+  const safeGroupCount = Math.max(1, Math.min(Number(groupCount) || 1, Math.floor(players.length / 2) || 1))
+  if (safeGroupCount <= 1) {
+    const seedOrder = getSeedOrder(bracketSize)
+    const slots = Array.from({ length: bracketSize }, () => null)
 
-  orderedPlayers.forEach((player, index) => {
-    const seedNumber = index + 1
-    const slotIndex = seedOrder.indexOf(seedNumber)
-    slots[slotIndex] = player.id
-  })
+    orderedPlayers.forEach((player, index) => {
+      const seedNumber = index + 1
+      const slotIndex = seedOrder.indexOf(seedNumber)
+      slots[slotIndex] = player.id
+    })
 
-  return { bracketSize, slots }
+    return {
+      slotsData: { bracketSize, slots },
+      groups: [{ label: 'A', startSlot: 0, slotCount: bracketSize, playerCount: players.length }],
+    }
+  }
+
+  const groupPlayerCount = Math.ceil(orderedPlayers.length / safeGroupCount)
+  const groupSlotCount = getBracketSize(groupPlayerCount)
+  const slots = Array.from({ length: groupSlotCount * safeGroupCount }, () => null)
+  const groups = []
+
+  for (let groupIndex = 0; groupIndex < safeGroupCount; groupIndex += 1) {
+    const groupPlayers = orderedPlayers.slice(groupIndex * groupPlayerCount, (groupIndex + 1) * groupPlayerCount)
+    const seedOrder = getSeedOrder(groupSlotCount)
+    const startSlot = groupIndex * groupSlotCount
+    groups.push({
+      label: getGroupLabel(groupIndex),
+      startSlot,
+      slotCount: groupSlotCount,
+      playerCount: groupPlayers.length,
+    })
+    groupPlayers.forEach((player, index) => {
+      const slotIndex = seedOrder.indexOf(index + 1)
+      slots[startSlot + slotIndex] = player.id
+    })
+  }
+
+  return {
+    slotsData: { bracketSize: slots.length, slots },
+    groups,
+  }
+}
+
+export function getGroupLabel(index) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  if (index < alphabet.length) return alphabet[index]
+  return `${alphabet[Math.floor(index / alphabet.length) - 1]}${alphabet[index % alphabet.length]}`
+}
+
+export function getBracketGroups(bracket) {
+  const groupCount = Number(bracket?.groupCount) || 1
+  const slots = bracket?.slots ?? []
+  if (groupCount <= 1 || !slots.length) return []
+  const groupSlotCount = slots.length / groupCount
+  if (!Number.isInteger(groupSlotCount)) return []
+  return Array.from({ length: groupCount }, (_, index) => ({
+    label: getGroupLabel(index),
+    startSlot: index * groupSlotCount,
+    slotCount: groupSlotCount,
+    playerCount: slots.slice(index * groupSlotCount, (index + 1) * groupSlotCount).filter(Boolean).length,
+  }))
 }
 
 function resolveSlot(slot, previousWinners) {

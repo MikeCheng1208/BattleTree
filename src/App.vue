@@ -19,6 +19,7 @@ const {
   setPlayerCount,
   updatePlayer,
   setPairingMode,
+  setGroupCount,
   generateBracket,
   setResult,
   updateScore,
@@ -95,6 +96,7 @@ function handleReshuffle() {
         @set-player-count="setPlayerCount"
         @update-player="updatePlayer"
         @set-pairing-mode="setPairingMode"
+        @set-group-count="setGroupCount"
         @generate="handleGenerate"
       />
       <ul v-if="generationErrors.length" class="error-list">
