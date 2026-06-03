@@ -2208,10 +2208,22 @@ input {
     grid-template-columns: 1fr;
   }
 
-  .lottery-status-bar,
   .lottery-setup-layout,
   .lottery-stage-layout {
     grid-template-columns: 1fr;
+  }
+
+  .lottery-status-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .lottery-status-bar > div {
+    min-height: 56px;
+    padding: 10px;
+  }
+
+  .lottery-status-bar strong {
+    font-size: 14px;
   }
 
   .confirm-list,
@@ -2224,13 +2236,26 @@ input {
   }
 
   .lottery-card-stage {
-    min-height: 380px;
-    padding: 20px;
+    min-height: 520px;
+    padding: 18px;
+  }
+
+  .deck-stack {
+    top: 44%;
+    width: min(230px, 66vw);
+    height: auto;
+    aspect-ratio: 5 / 7;
   }
 
   .draw-focus-card {
-    width: min(310px, 86vw);
-    min-height: 184px;
+    width: min(230px, 66vw);
+    min-height: 0;
+    aspect-ratio: 5 / 7;
+    padding: 22px;
+  }
+
+  .draw-focus-card strong {
+    font-size: clamp(26px, 8vw, 40px);
   }
 
   .drawn-list {
