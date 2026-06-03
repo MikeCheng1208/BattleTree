@@ -102,7 +102,17 @@ function handleReshuffle() {
       </ul>
     </section>
 
-    <section v-else ref="exportTarget" class="export-surface">
+    <section v-else ref="exportTarget" class="export-surface" :class="{ fullscreen: isFullscreen }">
+      <button
+        v-if="isFullscreen"
+        type="button"
+        class="fullscreen-exit"
+        aria-label="解除全螢幕"
+        @click="exportApi.exit"
+      >
+        <span></span>
+        <span></span>
+      </button>
       <BracketView
         ref="bracketViewRef"
         :bracket="currentBracket"

@@ -1,15 +1,30 @@
 <script setup>
+import { ref } from 'vue'
+
 defineProps({
   canExport: Boolean,
   isFullscreen: Boolean,
 })
 
 defineEmits(['add', 'list', 'delete', 'lottery', 'fullscreen', 'download'])
+
+const isMobileMenuOpen = ref(false)
 </script>
 
 <template>
-  <nav class="toolbar" aria-label="工具列">
+  <nav class="toolbar" :class="{ open: isMobileMenuOpen }" aria-label="工具列">
     <slot name="start"></slot>
+    <button
+      type="button"
+      class="toolbar-menu-toggle"
+      :aria-expanded="isMobileMenuOpen"
+      aria-label="切換工具列"
+      @click="isMobileMenuOpen = !isMobileMenuOpen"
+    >
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
     <div class="toolbar-actions">
       <button type="button" @click="$emit('add')">新增</button>
       <button type="button" @click="$emit('list')">選取</button>

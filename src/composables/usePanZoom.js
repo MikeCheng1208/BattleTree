@@ -18,6 +18,8 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
   const translateY = ref(0)
   const isDragging = ref(false)
   const dragStart = ref({ x: 0, y: 0, translateX: 0, translateY: 0 })
+  const activePointers = new Map()
+  let pinchStart = null
 
   const transformStyle = computed(() => ({
     transform: `translate(${translateX.value}px, ${translateY.value}px) scale(${scale.value})`,
@@ -82,26 +84,92 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
     translateY.value = (viewportRect.height - boardHeight * nextScale) / 2
   }
 
-  function onPointerDown(event) {
-    if (event.button !== 0 || isInteractiveTarget(event.target)) return
-    isDragging.value = true
+  function getPointerGesture() {
+    const pointers = [...activePointers.values()]
+    if (pointers.length < 2) return null
+    const [first, second] = pointers
+    const centerX = (first.x + second.x) / 2
+    const centerY = (first.y + second.y) / 2
+    const distance = Math.hypot(second.x - first.x, second.y - first.y)
+    return { centerX, centerY, distance }
+  }
+
+  function startPinchGesture() {
+    const gesture = getPointerGesture()
+    const viewport = viewportRef.value
+    if (!gesture || gesture.distance === 0 || !viewport) return
+    const rect = viewport.getBoundingClientRect()
+    const localCenterX = gesture.centerX - rect.left
+    const localCenterY = gesture.centerY - rect.top
+    pinchStart = {
+      ...gesture,
+      scale: scale.value,
+      contentX: (localCenterX - translateX.value) / scale.value,
+      contentY: (localCenterY - translateY.value) / scale.value,
+    }
+  }
+
+  function applyPinchGesture(gesture) {
+    const viewport = viewportRef.value
+    if (!viewport || !pinchStart?.distance) return
+    const rect = viewport.getBoundingClientRect()
+    const nextScale = clamp(pinchStart.scale * (gesture.distance / pinchStart.distance))
+    scale.value = nextScale
+    translateX.value = gesture.centerX - rect.left - pinchStart.contentX * nextScale
+    translateY.value = gesture.centerY - rect.top - pinchStart.contentY * nextScale
+  }
+
+  function syncDragStartToPointer() {
+    const pointer = [...activePointers.values()][0]
+    if (!pointer) return
     dragStart.value = {
-      x: event.clientX,
-      y: event.clientY,
+      x: pointer.x,
+      y: pointer.y,
       translateX: translateX.value,
       translateY: translateY.value,
+    }
+  }
+
+  function onPointerDown(event) {
+    if (event.button !== 0 || isInteractiveTarget(event.target)) return
+    activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    isDragging.value = true
+    if (activePointers.size === 1) {
+      syncDragStartToPointer()
+    } else if (activePointers.size === 2) {
+      startPinchGesture()
     }
     event.currentTarget?.setPointerCapture?.(event.pointerId)
   }
 
   function onPointerMove(event) {
+    if (!activePointers.has(event.pointerId)) return
+    activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    if (activePointers.size >= 2) {
+      const gesture = getPointerGesture()
+      if (!gesture) return
+      if (!pinchStart) startPinchGesture()
+      applyPinchGesture(gesture)
+      return
+    }
+
     if (!isDragging.value) return
     translateX.value = dragStart.value.translateX + event.clientX - dragStart.value.x
     translateY.value = dragStart.value.translateY + event.clientY - dragStart.value.y
   }
 
   function onPointerUp(event) {
-    isDragging.value = false
+    activePointers.delete(event.pointerId)
+    if (activePointers.size >= 2) {
+      startPinchGesture()
+    } else {
+      pinchStart = null
+      if (activePointers.size === 1) {
+        syncDragStartToPointer()
+      } else {
+        isDragging.value = false
+      }
+    }
     event.currentTarget?.releasePointerCapture?.(event.pointerId)
   }
 
