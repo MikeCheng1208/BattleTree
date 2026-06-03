@@ -2158,6 +2158,19 @@ input {
 }
 
 @media (max-width: 720px) {
+  .home-screen {
+    padding-inline: 20px;
+  }
+
+  .home-brand {
+    width: min(680px, 94vw);
+    justify-self: center;
+  }
+
+  .home-brand img {
+    translate: -1.5% 0;
+  }
+
   .toolbar {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: start;
