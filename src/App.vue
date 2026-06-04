@@ -1,13 +1,15 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import BracketListModal from './components/BracketListModal.vue'
 import BracketSetup from './components/BracketSetup.vue'
 import BracketView from './components/BracketView.vue'
 import LotteryModal from './components/LotteryModal.vue'
+import ThemePicker from './components/ThemePicker.vue'
 import Toolbar from './components/Toolbar.vue'
 import battleTreeLogo from './assets/logo.svg'
 import { useBracketExport } from './composables/useBracketExport'
 import { useBrackets } from './composables/useBrackets'
+import { createImageUrl, getStoredImage, removeStoredImage, setStoredImage } from './composables/useImageStorage'
 
 const {
   bracketList,
@@ -29,6 +31,17 @@ const {
 } = useBrackets()
 
 const VIEW_STORAGE = 'battletree:view'
+const THEME_STORAGE = 'battletree:theme'
+const BACKGROUND_FIT_STORAGE = 'battletree:background-fit'
+const CUSTOM_LOGO_KEY = 'custom-logo'
+const BACKGROUND_IMAGE_KEY = 'background-image'
+const styleThemes = [
+  { value: 'mono', label: '黑白灰', swatches: ['#050505', '#ffffff', '#8a8a8a'] },
+  { value: 'inverse', label: '暗色模式', swatches: ['#090d12', '#66d9ff', '#eef6fb'] },
+  { value: 'steel', label: '冷藍', swatches: ['#123047', '#e8f0f6', '#5f7f95'] },
+  { value: 'forest', label: '森林', swatches: ['#173527', '#eef4ec', '#6d8f63'] },
+  { value: 'copper', label: '赤銅', swatches: ['#4a2518', '#f5eee8', '#b56a42'] },
+]
 const showList = ref(false)
 const showLottery = ref(false)
 const showHomeConfirm = ref(false)
@@ -37,8 +50,19 @@ const bracketViewRef = ref(null)
 const generationErrors = ref([])
 const showHome = ref(localStorage.getItem(VIEW_STORAGE) !== 'app')
 const homeLeaving = ref(false)
+const currentTheme = ref(localStorage.getItem(THEME_STORAGE) || 'mono')
+const backgroundFit = ref(localStorage.getItem(BACKGROUND_FIT_STORAGE) || 'cover-center')
+const customLogo = ref('')
+const backgroundImage = ref('')
 
 const canExport = computed(() => currentBracket.value?.status === 'ready')
+const displayedLogo = computed(() => customLogo.value || battleTreeLogo)
+const shellStyle = computed(() => ({
+  '--custom-bg-image': backgroundImage.value ? `url(${backgroundImage.value})` : 'none',
+  '--custom-bg-blur-image': backgroundImage.value && backgroundFit.value === 'contain' ? `url(${backgroundImage.value})` : 'none',
+  '--custom-bg-size': getBackgroundFitStyle(backgroundFit.value).size,
+  '--custom-bg-position': getBackgroundFitStyle(backgroundFit.value).position,
+}))
 const exportApi = useBracketExport(
   exportTarget,
   currentBracket,
@@ -97,11 +121,108 @@ function returnHome({ preserve }) {
   showHome.value = true
   homeLeaving.value = false
 }
+
+function setTheme(theme) {
+  currentTheme.value = theme
+  localStorage.setItem(THEME_STORAGE, theme)
+}
+
+function getBackgroundFitStyle(mode) {
+  const styles = {
+    contain: { size: 'contain', position: 'center' },
+    'cover-center': { size: 'cover', position: 'center' },
+    'cover-top': { size: 'cover', position: 'top center' },
+    actual: { size: 'auto', position: 'center' },
+  }
+  return styles[mode] ?? styles['cover-center']
+}
+
+function setBackgroundFit(mode) {
+  backgroundFit.value = mode
+  localStorage.setItem(BACKGROUND_FIT_STORAGE, mode)
+}
+
+function replaceImageUrl(target, nextUrl) {
+  if (target.value) URL.revokeObjectURL(target.value)
+  target.value = nextUrl
+}
+
+async function setCustomLogo(file) {
+  replaceImageUrl(customLogo, createImageUrl(file))
+  try {
+    await setStoredImage(CUSTOM_LOGO_KEY, file)
+  } catch (error) {
+    console.error('Failed to save custom logo', error)
+    alert('Logo 儲存失敗，請確認瀏覽器是否允許本地儲存。')
+  }
+}
+
+async function resetCustomLogo() {
+  try {
+    await removeStoredImage(CUSTOM_LOGO_KEY)
+    replaceImageUrl(customLogo, '')
+  } catch (error) {
+    console.error('Failed to remove custom logo', error)
+  }
+}
+
+async function setBackgroundImage(file) {
+  replaceImageUrl(backgroundImage, createImageUrl(file))
+  try {
+    await setStoredImage(BACKGROUND_IMAGE_KEY, file)
+  } catch (error) {
+    console.error('Failed to save background image', error)
+    alert('背景圖片儲存失敗，請確認瀏覽器是否允許本地儲存。')
+  }
+}
+
+async function resetBackgroundImage() {
+  try {
+    await removeStoredImage(BACKGROUND_IMAGE_KEY)
+    replaceImageUrl(backgroundImage, '')
+  } catch (error) {
+    console.error('Failed to remove background image', error)
+  }
+}
+
+onMounted(async () => {
+  try {
+    const [storedLogo, storedBackground] = await Promise.all([
+      getStoredImage(CUSTOM_LOGO_KEY),
+      getStoredImage(BACKGROUND_IMAGE_KEY),
+    ])
+    if (storedLogo) customLogo.value = createImageUrl(storedLogo)
+    if (storedBackground) backgroundImage.value = createImageUrl(storedBackground)
+  } catch (error) {
+    console.error('Failed to load stored theme images', error)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (customLogo.value) URL.revokeObjectURL(customLogo.value)
+  if (backgroundImage.value) URL.revokeObjectURL(backgroundImage.value)
+})
 </script>
 
 <template>
-  <main class="app-shell">
+  <main class="app-shell" :data-theme="currentTheme" :style="shellStyle">
     <section v-if="showHome" class="home-screen" :class="{ leaving: homeLeaving }">
+      <ThemePicker
+        class="home-theme-picker"
+        :current-theme="currentTheme"
+        :style-themes="styleThemes"
+        :logo-src="displayedLogo"
+        :background-image="backgroundImage"
+        :background-fit="backgroundFit"
+        :has-custom-logo="Boolean(customLogo)"
+        :has-background-image="Boolean(backgroundImage)"
+        @set-theme="setTheme"
+        @set-background-fit="setBackgroundFit"
+        @set-logo="setCustomLogo"
+        @reset-logo="resetCustomLogo"
+        @set-background="setBackgroundImage"
+        @reset-background="resetBackgroundImage"
+      />
       <div class="home-exit-layers" aria-hidden="true">
         <span></span>
         <span></span>
@@ -119,7 +240,13 @@ function returnHome({ preserve }) {
     <Toolbar
       :can-export="canExport"
       :is-fullscreen="isFullscreen"
-      :logo-src="battleTreeLogo"
+      :logo-src="displayedLogo"
+      :current-theme="currentTheme"
+      :style-themes="styleThemes"
+      :background-image="backgroundImage"
+      :background-fit="backgroundFit"
+      :has-custom-logo="Boolean(customLogo)"
+      :has-background-image="Boolean(backgroundImage)"
       @add="addBracket"
       @list="showList = true"
       @delete="handleDelete()"
@@ -127,6 +254,12 @@ function returnHome({ preserve }) {
       @fullscreen="exportApi.toggle"
       @download="exportApi.downloadJpeg"
       @home="requestHome"
+      @set-theme="setTheme"
+      @set-background-fit="setBackgroundFit"
+      @set-logo="setCustomLogo"
+      @reset-logo="resetCustomLogo"
+      @set-background="setBackgroundImage"
+      @reset-background="resetBackgroundImage"
     />
 
     <section v-if="currentBracket?.status === 'setup'" class="content-wrap">

@@ -1,23 +1,62 @@
 <script setup>
 import { ref } from 'vue'
+import ThemePicker from './ThemePicker.vue'
 
-defineProps({
+const props = defineProps({
   canExport: Boolean,
   isFullscreen: Boolean,
   logoSrc: {
     type: String,
     required: true,
   },
+  currentTheme: {
+    type: String,
+    required: true,
+  },
+  styleThemes: {
+    type: Array,
+    required: true,
+  },
+  backgroundImage: {
+    type: String,
+    default: '',
+  },
+  backgroundFit: {
+    type: String,
+    required: true,
+  },
+  hasCustomLogo: Boolean,
+  hasBackgroundImage: Boolean,
 })
 
-defineEmits(['add', 'list', 'delete', 'lottery', 'fullscreen', 'download', 'home'])
+const emit = defineEmits([
+  'add',
+  'list',
+  'delete',
+  'lottery',
+  'fullscreen',
+  'download',
+  'home',
+  'set-theme',
+  'set-background-fit',
+  'set-logo',
+  'reset-logo',
+  'set-background',
+  'reset-background',
+])
 
 const isMobileMenuOpen = ref(false)
 </script>
 
 <template>
   <nav class="toolbar" :class="{ open: isMobileMenuOpen }" aria-label="工具列">
-    <a href="#" class="toolbar-logo" aria-label="回到首頁" @click.prevent="$emit('home')">
+    <a
+      href="#"
+      class="toolbar-logo"
+      :class="{ 'custom-logo': hasCustomLogo }"
+      aria-label="回到首頁"
+      @click.prevent="$emit('home')"
+    >
       <img :src="logoSrc" alt="" />
     </a>
     <button
@@ -47,6 +86,21 @@ const isMobileMenuOpen = ref(false)
       <button type="button" :disabled="!canExport" @click="$emit('download')">
         下載<span class="desktop-label"> JPG</span>
       </button>
+      <ThemePicker
+        :current-theme="currentTheme"
+        :style-themes="styleThemes"
+        :logo-src="logoSrc"
+        :background-image="backgroundImage"
+        :background-fit="backgroundFit"
+        :has-custom-logo="hasCustomLogo"
+        :has-background-image="hasBackgroundImage"
+        @set-theme="emit('set-theme', $event)"
+        @set-background-fit="emit('set-background-fit', $event)"
+        @set-logo="emit('set-logo', $event)"
+        @reset-logo="emit('reset-logo')"
+        @set-background="emit('set-background', $event)"
+        @reset-background="emit('reset-background')"
+      />
     </div>
   </nav>
 </template>
