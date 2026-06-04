@@ -1,95 +1,170 @@
-# BattleTree 縱向比賽對戰表系統實作計劃
+# BattleTree 目前架構與規格
 
-> 單淘汰賽對戰表產生器。版面縱向、由下往上收斂：第一輪在最底部，冠軍在最頂端。
-> 純前端，資料存 `localStorage`，不建後端、不加路由。
-
----
-
-## 1. 專案現況
-
-- 專案是 Vite + Vue 3 單頁應用。
-- 目前仍是 Vite/Vue 樣板：
-  - `src/App.vue` 匯入並渲染 `src/components/HelloWorld.vue`。
-  - `src/style.css` 仍是樣板樣式。
-  - `README.md` 仍是 Vue 3 + Vite 樣板內容。
-- `package.json` 目前只有 `vue`，尚未安裝 `@vueuse/core`、`html-to-image`、`gsap`。
-- 專案目錄不是 git repository，本次實作前後無法用 `git diff` 檢查變更，需靠檔案檢查與 build 驗證。
+> 本文件描述目前已實作的 BattleTree 規格，作為後續開發、測試與回歸檢查依據。
 
 ---
 
-## 2. 需要先確認的問題
+## 1. 專案定位
 
-這些問題不阻擋 MVP 實作，但會影響細節。若未回覆，先採用「預設決策」。
+BattleTree 是純前端 Vue 3 單頁應用，用於建立與展示單淘汰賽對戰表。
 
-| 問題 | 預設決策 |
-| --- | --- |
-| 參賽人數上限要多少？ | 先做 2 至 64 人。64 人以上會讓縱向對戰表與匯出圖過大。 |
-| 選手「編號」是否可重複？ | 不可重複。產生前驗證 seed 必須是 1 至 N 的唯一整數。 |
-| `random` 模式重新抽籤後，是否保留已改過的姓名與編號？ | 保留 players，只重洗 `slots` 並清空 `results`。 |
-| score 是否允許小數或負數？ | 不允許。只允許空值或 0 以上整數。 |
-| 下載 JPG 是否只截對戰表，還是包含工具列與抽籤狀態？ | 只截對戰表區域，不包含工具列與 modal。 |
-| 刪除目前唯一一張對戰表後要怎麼處理？ | 自動建立一張新的 setup 狀態對戰表並設為 current。 |
-| localStorage schema 日後變更怎麼辦？ | 第一版加入 `version: 1`，讀取時遇到缺欄位做 normalize。 |
-| 抽籤「全部」是否包含已抽出過的人？ | 重新確認名單時包含全部符合條件者；進入舞台後，抽出者會從當次 pool 移除。 |
+目前範圍：
+
+- 不建後端。
+- 不做帳號與雲端同步。
+- 對戰表資料存在 localStorage。
+- 自訂 Logo / 背景圖存在 IndexedDB。
+- 支援桌機與手機版響應式操作。
 
 ---
 
-## 3. 核心需求
+## 2. 技術選型
 
-1. 可新增、選取、刪除多張對戰表。
-2. 可編輯比賽名稱。
-3. 建立流程固定為：
-   `選人數 -> 編輯每位對戰者姓名與編號 -> 選擇依序配對或隨機抽籤 -> 產生對戰表`
-4. 非 2 次方人數自動補滿到 2 次方，並用標準 seeding 分散 bye。
-5. 選手區塊顯示姓名、編號、win icon。
-6. 點 win icon 可晉級，可選填比分；再點同一勝者可取消，且連鎖清除後續不成立的結果。
-7. 對戰表縱向由下往上收斂，第一輪在底部，冠軍在頂部。
-8. 工具列包含：新增、選取、刪除、抽籤、全螢幕、下載 JPG。
-9. 抽籤功能為純展示，不回寫對戰表：
-   - 條件：全部、第一輪敗者、第二輪敗者等。
-   - 先列出名單確認。
-   - 一次抽一位，抽中者從籤筒移除。
-   - 名字輪播閃爍並逐漸減速後揭曉。
-
----
-
-## 4. 技術選型
-
-- Vue 3 + Composition API + `<script setup>`。
+- Vue 3 + Composition API + `<script setup>`
+- Vite
 - `@vueuse/core`
-  - `useStorage`：localStorage 響應式持久化。
-  - `useFullscreen`：對戰表容器全螢幕。
-  - `useResizeObserver`：對戰表尺寸改變時重算連線。
+  - localStorage 響應式儲存。
+  - Fullscreen API。
+  - ResizeObserver。
 - `html-to-image`
-  - 使用 `toJpeg` 匯出對戰表 DOM。
+  - JPG 匯出。
 - `gsap`
-  - 抽籤輪播、揭曉、彈窗進出、勝者高亮等動畫都使用 GSAP。
-
-安裝指令：
-
-```bash
-npm install @vueuse/core html-to-image gsap
-```
+  - 抽籤動畫。
+- IndexedDB
+  - 儲存自訂圖片 Blob。
 
 驗證指令：
 
 ```bash
 npm run build
-npm run dev
 ```
 
 ---
 
-## 5. 資料模型
+## 3. 應用狀態
+
+### 3.1 頁面狀態
+
+localStorage key：
+
+- `battletree:view`
+
+值：
+
+- `home`：顯示首頁。
+- `app`：顯示主應用。
+
+規格：
+
+- 首次進入預設顯示首頁。
+- 點擊「開始對戰」後進入主應用。
+- 重新整理後保留目前所在頁面。
+- Header Logo 點擊回首頁時，需彈窗詢問是否保留目前輸入內容。
+- 不保留時重置目前對戰表。
+
+### 3.2 主題狀態
+
+localStorage key：
+
+- `battletree:theme`
+
+目前主題：
+
+- `mono`：黑白灰。
+- `inverse`：暗色模式。
+- `steel`：冷藍。
+- `forest`：森林。
+- `copper`：赤銅。
+
+主題入口：
+
+- 首頁桌機右上角。
+- 主應用 Header 最右側。
+
+點擊入口開啟 `ThemePicker` 彈窗，不使用下拉選單。
+
+---
+
+## 4. 自訂圖片與背景規格
+
+### 4.1 IndexedDB
+
+DB：
+
+- `battletree-images`
+
+Object store：
+
+- `images`
+
+Keys：
+
+- `custom-logo`
+- `background-image`
+
+儲存內容：
+
+- 原始 `File/Blob`。
+- 不轉 Base64。
+
+顯示方式：
+
+- App 啟動時讀取 IndexedDB。
+- 使用 `URL.createObjectURL(blob)` 產生畫面可用 URL。
+- 替換、移除或 unmount 時 revoke 舊 object URL。
+
+### 4.2 上傳限制
+
+- Logo 上限：2MB。
+- 背景圖上限：6MB。
+- 非圖片檔或超過限制時，在彈窗內顯示錯誤訊息。
+- 選取圖片後需立即在彈窗預覽區顯示，不等待 IndexedDB 寫入完成。
+
+### 4.3 Logo
+
+- 自訂 Logo 只替換主應用 Header 左上角 Logo。
+- 首頁 BattleTree Logo 永遠使用預設 `src/assets/logo.svg`。
+- 暗色模式不可改變自訂 Logo 顏色。
+- 自訂 Logo 不套用 invert / filter。
+
+### 4.4 背景圖
+
+localStorage key：
+
+- `battletree:background-fit`
+
+目前背景圖透明度：
+
+- App 背景圖片層：50%。
+- 對戰表 viewport 主題底色：30%。
+
+背景圖呈現方式：
+
+| 值 | 顯示名稱 | 規格 |
+| --- | --- | --- |
+| `contain` | 完整 | 前景使用 `contain` 完整顯示；底層同圖使用 `cover` 填滿、`center center`、`blur(6px)`。 |
+| `cover-center` | 填滿 | `cover`，`center center`。 |
+| `cover-top` | 靠上 | `cover`，`top center`。 |
+| `actual` | 原始 | `auto`，`center center`。 |
+
+背景層實作：
+
+- `.app-shell::before`：只在 `contain` 模式放模糊延展底層。
+- `.app-shell::after`：顯示實際背景圖。
+- `.app-shell > *`：內容層 z-index 高於背景。
+
+---
+
+## 5. 對戰表資料模型
 
 由 `src/composables/useBrackets.js` 管理。
 
 localStorage keys：
 
-- `battletree:brackets`：`Record<string, Bracket>`
-- `battletree:currentId`：目前開啟的對戰表 id
+- `battletree:brackets`
+- `battletree:currentId`
 
-`Bracket` 結構：
+`Bracket`：
 
 ```js
 {
@@ -104,6 +179,7 @@ localStorage keys：
     { id: string, name: string, seed: number }
   ],
   pairingMode: 'order' | 'random',
+  groupCount: 1 | 2 | 4 | 8,
 
   bracketSize: number,
   slots: (string | null)[],
@@ -118,31 +194,32 @@ localStorage keys：
   lottery: {
     poolFilter: 'all' | `loser-r${number}`,
     confirmed: boolean,
+    excludedIds: string[],
     pool: string[],
     drawn: string[]
   }
 }
 ```
 
-資料不變量：
+資料規則：
 
-- `players.length` 必須介於 2 至 64。
-- `players[].seed` 必須是 1 至 N 的唯一整數。
-- `bracketSize` 必須是大於等於 `players.length` 的最小 2 次方。
-- `slots.length === bracketSize`。
-- `slots` 只能包含現有 player id 或 `null`。
-- `results` 只保存使用者手動輸入的結果；bye 自動晉級不寫入 `results`。
-- 修改 players、seed、pairingMode 後，如果已產生對戰表，需提示並重新產生，避免舊 `slots/results` 與名單不一致。
+- 預設參賽人數：4。
+- 參賽人數最少 2，目前無 64 人上限。
+- `seed` 由系統維護，UI 不可編輯。
+- `seed` 必須是 1 至 N 的唯一整數。
+- `groupCount` 只允許 1、2、4、8，且不得超過 `Math.floor(players.length / 2)`。
+- `bracketSize` 為產生後 slots 長度。
+- 修改 players、pairingMode、groupCount 後，ready 對戰表回到 setup，並清空 slots/results。
 
 ---
 
 ## 6. 對戰表演算法
 
-檔案：`src/composables/useBracketEngine.js`。
+檔案：
+
+- `src/composables/useBracketEngine.js`
 
 ### 6.1 bracketSize
-
-UI 限制最少 2 人，因此 engine 仍做防禦式處理：
 
 ```js
 function getBracketSize(count) {
@@ -155,37 +232,49 @@ function getBracketSize(count) {
 
 使用遞迴 seeding order 分散強種子與 bye。
 
-```js
+```text
 size 2 -> [1, 2]
 size 4 -> [1, 4, 3, 2]
-size 8 -> [1, 8, 5, 4, 3, 6, 7, 2]
+size 8 -> [1, 8, 4, 5, 3, 6, 7, 2]
 ```
 
 規則：
 
+- `order`：依 `seed` 升冪排序。
+- `random`：Fisher-Yates 洗牌。
+- 未滿 2 次方的空位填 `null`，視為 bye。
+
+### 6.3 分組
+
+`createGroupedSlots(players, pairingMode, groupCount)`：
+
+- `groupCount <= 1`：產生單一對戰表。
+- `groupCount > 1`：依選手順序切成多組。
+- 每組補齊到各組所需的 2 次方 slot。
+- 回傳總 slots 與 groups metadata。
+
+groups metadata：
+
 ```js
-seeds(n) = seeds(n / 2).flatMap(seed => [seed, n + 1 - seed])
+{
+  label: 'A',
+  startSlot: number,
+  slotCount: number,
+  playerCount: number
+}
 ```
 
-產生 slots：
+### 6.4 rounds 推導
 
-- order：依 `seed` 升冪排序 players，填入第 1 至 N 種子。
-- random：先 Fisher-Yates 洗牌 players，再填入第 1 至 N 種子。
-- 超過 players.length 的種子填 `null`。
+rounds 不存入 localStorage，每次由 `slots + results` 推導。
 
-### 6.3 rounds 推導
-
-不要把 rounds 存進 localStorage。每次由 `slots + results` 推導。
-
-matchId 格式：
+matchId：
 
 ```js
 `r${roundIndex}-m${matchIndex}`
 ```
 
-roundIndex 從 0 開始，`rounds[0]` 是第一輪。
-
-每場 match：
+match 結構：
 
 ```js
 {
@@ -197,244 +286,215 @@ roundIndex 從 0 開始，`rounds[0]` 是第一輪。
   playerA,
   playerB,
   winnerId,
+  result,
   isBye,
   isPlayable
 }
 ```
 
-晉級規則：
+### 6.5 連鎖清除
 
-- A 是 player、B 是 `null`：A 自動晉級，不顯示 win icon。
-- B 是 player、A 是 `null`：B 自動晉級，不顯示 win icon。
-- A/B 都是 player：依 `results[matchId].winnerSlot` 決定。
-- A/B 其中一方尚未從前輪產生：此場不可點擊。
-
-### 6.4 連鎖清除
-
-取消或改變某場勝者時，必須清除所有上游依賴結果。
-
-做法：
-
-1. 刪除目前 match 的 result。
-2. 重新推導 rounds。
-3. 從下一輪開始檢查既有 results：若 result 指向的 player 不再存在於該 match 的 A/B，刪除該 result。
-4. 重複直到沒有不合法 result。
-
-### 6.5 敗者名單
-
-供抽籤使用：
-
-```js
-getLosersByRound(bracket, roundIndex): string[]
-getRoundLabels(bracket): { value: `loser-r${number}`, label: string }[]
-```
+改變或取消某場勝者後，必須清除後續不合法 result。
 
 規則：
 
-- 只計入 A/B 都是 player 且已有 winner 的 match。
-- bye 場與未分勝負場不產生敗者。
-- `all` 永遠是所有 players。
+- 若後續 result 指向的選手不再存在於該 match 的 A/B，刪除該 result。
+- 重複檢查直到所有結果合法。
 
 ---
 
-## 7. 元件拆分
+## 7. 元件職責
 
-```txt
+```text
 src/
 ├─ App.vue
 ├─ components/
 │  ├─ Toolbar.vue
+│  ├─ ThemePicker.vue
 │  ├─ BracketSetup.vue
 │  ├─ BracketView.vue
 │  ├─ MatchCard.vue
 │  ├─ PlayerSlot.vue
-│  ├─ BracketListModal.vue
 │  ├─ ScorePopover.vue
+│  ├─ BracketListModal.vue
 │  └─ LotteryModal.vue
 ├─ composables/
 │  ├─ useBrackets.js
 │  ├─ useBracketEngine.js
 │  ├─ useBracketExport.js
-│  └─ useLottery.js
+│  ├─ useImageStorage.js
+│  ├─ useLottery.js
+│  └─ usePanZoom.js
 └─ style.css
 ```
 
 職責：
 
-- `App.vue`：初始化 store、顯示 Toolbar、setup/ready 切換、modal 開關、可編輯比賽名稱。
-- `Toolbar.vue`：新增、選取、刪除、抽籤、全螢幕、下載。
-- `BracketSetup.vue`：人數、姓名、編號、配對方式、產生對戰表。
-- `BracketView.vue`：渲染縱向對戰表、SVG 連線、比分標籤、random 重新抽籤。
-- `MatchCard.vue`：單場對戰與 win icon 互動。
-- `PlayerSlot.vue`：選手顯示、勝者/可點/disabled 狀態。
-- `ScorePopover.vue`：可選比分輸入。
-- `BracketListModal.vue`：既有對戰表列表、切換、刪除。
-- `LotteryModal.vue`：抽籤三步流程與舞台動畫。
+- `App.vue`：全域狀態、頁面切換、主題、圖片、資料流與主要彈窗。
+- `Toolbar.vue`：主應用工具列。
+- `ThemePicker.vue`：風格設定、主題切換、圖片上傳與背景呈現模式。
+- `BracketSetup.vue`：設定頁。
+- `BracketView.vue`：對戰表視角、分組分頁、pan/zoom、SVG 連線。
+- `MatchCard.vue`：單場比賽。
+- `PlayerSlot.vue`：選手與晉級操作。
+- `ScorePopover.vue`：比分輸入。
+- `BracketListModal.vue`：對戰表列表。
+- `LotteryModal.vue`：抽籤流程與展示。
 
 ---
 
-## 8. 版面與互動設計
+## 8. UI 與響應式規格
 
-### 8.1 對戰表
+### 8.1 首頁
 
-- 使用縱向 layout，但 DOM 順序建議由冠軍到第一輪，視覺上第一輪在底部。
-- 每一輪是一列，卡片水平方向用 grid 或 flex 分散。
-- 父 match 需置中於兩個子 match 的中間。
-- SVG overlay 畫子卡到父卡的連線。
-- 每次視窗 resize、卡片尺寸變化、結果變化後重算連線。
+- 顯示預設 BattleTree Logo。
+- 中央顯示「開始對戰」按鈕。
+- 桌機右上角顯示風格設定按鈕。
+- 手機首頁隱藏風格設定按鈕。
+- 點擊開始對戰有離場過渡動畫。
 
-### 8.2 卡片
+### 8.2 Header
 
-- 未決定勝者：兩邊都可點 win icon。
-- 已決定勝者：勝者高亮，敗者降噪。
-- 再點同一勝者：取消該場結果。
-- 點另一位選手：改勝者，並清除後續不合法結果。
-- score 可留空；只在 A/B 至少一個有值時顯示比分。
+- 左上角 Logo 使用預設 Logo 或自訂 Logo。
+- 自訂 Logo 保持原色。
+- 點 Logo 回首頁前需詢問是否保留內容。
+- 工具列按鈕：新增、選取、刪除、抽籤、全螢幕、下載 JPG、風格設定。
+- 風格設定按鈕位於最右側。
+- 手機版使用收合選單。
+- 手機版隱藏全螢幕與縮放百分比/縮放按鈕。
 
-### 8.3 抽籤
+### 8.3 設定頁
+
+- 內容寬度：900px。
+- 與 Header 上方距離：30px。
+- 比賽名稱位於設定區塊內，參賽人數上方。
+- 編號不可編輯。
+- 手機版選手列維持編號與姓名同一行，比例約 2:8。
+
+### 8.4 對戰表
+
+視角：
+
+- `標準`
+- `橫向`
+- `分組`
+
+分組視角：
+
+- 使用 tabs 顯示各組與總決賽。
+- 預設若有分組，進入對戰表後使用分組視角。
+
+背景：
+
+- viewport 主題底色為 30% 透明。
+- 自訂背景圖需從對戰表後方透出。
+
+---
+
+## 9. 抽籤規格
 
 流程：
 
-1. 選條件。
-2. 顯示名單與人數，確認後才建立 pool。
-3. 舞台顯示剩餘名單與已抽出名單。
-4. 按抽一位後，先決定 winner，再用 GSAP 做表演動畫。
-5. 動畫期間鎖住按鈕。
-6. 動畫完成後才從 pool 移除 winner 並加入 drawn。
+1. 設定抽籤來源。
+2. 顯示名單預覽。
+3. 每張卡右上角有勾選控制。
+4. 預設全部勾選。
+5. 取消勾選後卡片透明度降至 40%，並從本次抽籤 pool 移除。
+6. 開始抽籤後不可更動名單。
+7. 抽籤舞台使用華麗卡片動畫。
+8. 抽中時顯示彩花。
+9. 抽中者從 pool 移除並加入 drawn。
 
-GSAP 清理：
-
-- `useLottery` 需保存 timeline ref。
-- modal 關閉或 component unmount 時執行 `timeline.kill()`。
-- 不使用 CSS keyframes 做抽籤主動畫。
-
----
-
-## 9. 工具列功能
-
-| 功能 | 行為 |
-| --- | --- |
-| 新增對戰表 | 建立 setup 狀態 Bracket，設為 current。 |
-| 選取之前的對戰表 | 開啟列表 modal，點選後切換 currentId。 |
-| 刪除對戰表 | confirm 後刪除；若刪到沒有任何對戰表，自動建立新表。 |
-| 抽籤 | 開 LotteryModal。setup 階段若已有 players，也可抽全部；ready 階段可抽敗者。 |
-| 全螢幕 | 對 `BracketView` 容器使用 `useFullscreen` toggle。 |
-| 下載 JPG | 用 `html-to-image` 匯出 `BracketView` 容器，檔名使用 sanitized bracket name。 |
+抽籤資料不回寫對戰表結果，只作展示。
 
 ---
 
-## 10. 實作順序
+## 10. 匯出與全螢幕
 
-1. 安裝相依：`@vueuse/core`、`html-to-image`、`gsap`。
-2. 建立 `useBracketEngine.js`，先完成純函式與基本測試資料。
-3. 建立 `useBrackets.js`，處理 CRUD、currentId、normalize、updatedAt。
-4. 改 `App.vue`，移除樣板 HelloWorld 入口。
-5. 建立 `BracketSetup.vue`，完成建立流程與驗證。
-6. 建立 `BracketView.vue`、`MatchCard.vue`、`PlayerSlot.vue`，完成晉級與取消。
-7. 加入 SVG 連線與比分顯示。
-8. 建立 `Toolbar.vue`、`BracketListModal.vue`、`useBracketExport.js`。
-9. 建立 `useLottery.js`、`LotteryModal.vue` 與 GSAP 動畫。
-10. 重寫 `src/style.css` 與 `index.html` title。
-11. 更新 `README.md`，移除 Vue/Vite 樣板說明。
-12. 執行 build 與瀏覽器手動驗收。
+- 桌機顯示全螢幕與下載 JPG。
+- 手機隱藏全螢幕。
+- 全螢幕狀態提供右下角解除全螢幕 icon。
+- JPG 匯出來源為對戰表 DOM，不包含工具列與 modal。
+- 匯出使用 `html-to-image`。
 
 ---
 
-## 11. 需要修改或新增的檔案
+## 11. 驗收清單
 
-- 修改 `package.json`、`package-lock.json`。
-- 修改 `index.html`。
-- 修改 `README.md`。
-- 修改 `src/App.vue`。
-- 修改 `src/style.css`。
-- 可保留或刪除 `src/components/HelloWorld.vue`；若不再使用，建議刪除。
-- 新增 `src/components/Toolbar.vue`。
-- 新增 `src/components/BracketSetup.vue`。
-- 新增 `src/components/BracketView.vue`。
-- 新增 `src/components/MatchCard.vue`。
-- 新增 `src/components/PlayerSlot.vue`。
-- 新增 `src/components/ScorePopover.vue`。
-- 新增 `src/components/BracketListModal.vue`。
-- 新增 `src/components/LotteryModal.vue`。
-- 新增 `src/composables/useBrackets.js`。
-- 新增 `src/composables/useBracketEngine.js`。
-- 新增 `src/composables/useBracketExport.js`。
-- 新增 `src/composables/useLottery.js`。
+### 11.1 基本流程
 
----
+- 首次進入顯示首頁。
+- 點「開始對戰」進入設定頁。
+- 重新整理後停留在目前頁面。
+- 預設參賽人數是 4。
+- 可設定 2 人以上參賽者。
+- 編號不可編輯。
+- 修改姓名可正常保存。
+- 依序配對與隨機配對皆可產生對戰表。
 
-## 12. 驗收清單
+### 11.2 分組與視角
 
-### 建立流程
+- 可選不分組、2 組、4 組、8 組。
+- 分組數不超過可用最大組數。
+- 分組後預設使用分組視角。
+- 分組視角使用 tabs 切換組別與總決賽。
+- 標準與橫向視角不應重疊。
 
-- 可新增 setup 對戰表。
-- 可修改比賽名稱。
-- 可設定 2 至 64 人。
-- 人數變更時自動產生 Player1 至 PlayerN。
-- seed 不可空白、不可重複、不可超出 1 至 N。
-- 選 order 後照 seed 配對。
-- 選 random 後洗牌配對。
+### 11.3 對戰結果
 
-### 對戰表
+- bye 自動晉級。
+- 可選勝者。
+- 可修改勝者。
+- 修改前輪勝者會清除後續不合法結果。
+- 勝者選取不會自動 fitToView。
+- 可輸入比分。
+- 冠軍正確顯示。
 
-- 8 人產生 4 場第一輪，第一輪在底部，冠軍在頂部。
-- 6 人補成 8 格，2 個 bye 分散，高種子自動晉級。
-- bye 場不顯示 win icon。
-- 可點 win icon 晉級。
-- 可不輸入比分直接晉級。
-- 可輸入比分並顯示在線上。
-- 再點同一勝者可取消。
-- 改變前輪勝者會清除後續不合法結果。
-- random 模式可重新抽籤，重洗 slots 並清空 results。
+### 11.4 圖片與風格
 
-### 持久化與 CRUD
+- 風格按鈕開啟彈窗。
+- 彈窗遮罩覆蓋整個 viewport 並置中。
+- 可切換主題。
+- 可上傳 Logo，並立即在彈窗預覽。
+- Logo 只替換 Header，不替換首頁。
+- 暗色模式不改變自訂 Logo 顏色。
+- Logo 超過 2MB 顯示錯誤。
+- 可還原 Logo。
+- 可上傳背景圖，並立即在彈窗預覽。
+- 背景圖超過 6MB 顯示錯誤。
+- 可移除背景圖。
+- 背景圖模式切換後立即套用並持久化。
+- `完整` 模式有模糊延展底層與完整前景。
 
-- 重新整理後目前對戰表可還原。
-- 可切換既有對戰表。
-- 可刪除對戰表。
-- 刪除最後一張後會建立新 setup 對戰表。
+### 11.5 抽籤
 
-### 抽籤
+- 名單預覽可勾選/取消。
+- 取消卡片透明度為 40%。
+- 開始抽籤後不可更動名單。
+- 抽中後有彩花動畫。
+- pool 空時不能繼續抽。
 
-- 未開賽時只有「全部」可用。
-- 有敗者後才出現「第 N 輪敗者」。
-- 確認名單顯示姓名、編號、人數。
-- 抽一位有 GSAP 輪播閃爍、逐漸減速、定格揭曉。
-- 抽中者從 pool 移除並加入 drawn。
-- pool 空時抽一位 disabled。
-- 重置抽籤會回到選條件。
+### 11.6 響應式
 
-### 匯出與全螢幕
+- 手機工具列收合。
+- 手機隱藏全螢幕與縮放百分比/縮放按鈕。
+- 手機設定頁選手列維持編號與姓名同一行。
+- 手機抽籤大卡片不被裁切。
 
-- 全螢幕可進出。
-- JPG 下載成功。
-- JPG 包含對戰表、連線、比分，不包含 modal。
-- 縮放視窗後連線重新對齊。
-
-### 品質
+### 11.7 品質
 
 - `npm run build` 通過。
-- console 無明顯錯誤。
-- modal 關閉與 component unmount 後無殘留 GSAP timeline。
-- localStorage 壞資料或舊資料不會讓畫面崩潰，會 normalize 或建立新表。
+- Console 不應有 BattleTree app 自身錯誤。
+- 瀏覽器 extension 的 `contentscript.js` warning 不列入 app 錯誤。
+- IndexedDB 讀寫失敗需顯示可理解錯誤，不應讓 app crash。
 
 ---
 
-## 13. 風險與補強
+## 12. 已知限制
 
-- **連線對齊風險**：卡片高度會因姓名長度、比分、響應式改變。需統一在 `nextTick` 後量測，並用 `ResizeObserver` 觸發重算。
-- **匯出風險**：`html-to-image` 對字體、背景、SVG overlay 可能有差異。需指定 `backgroundColor`，避免透明背景。
-- **資料一致性風險**：取消或改勝者時若不清後續結果，會出現不存在的晉級者。需把連鎖清除當成 engine 純函式處理。
-- **抽籤公平性風險**：動畫不可決定結果。需先用亂數決定 winner，再讓動畫落到該 winner。
-- **大型 bracket 風險**：64 人時畫面和 JPG 都很大。需讓對戰表容器可水平/垂直捲動，避免壓縮到不可讀。
-
----
-
-## 14. 非本次範圍
-
-- 雙敗淘汰。
-- 季軍賽。
-- 後端儲存與分享連結。
-- PDF 匯出。
-- 拖曳調整對戰。
-- 多國語系。
+- 沒有後端同步。
+- 沒有分享連結。
+- 沒有雙敗淘汰。
+- 沒有 PDF 匯出。
+- 圖片儲存在單一瀏覽器 IndexedDB，清除瀏覽器資料後會消失。
+- 大量參賽者仍可能造成 DOM 與匯出效能壓力。

@@ -1,24 +1,27 @@
 # BattleTree
 
-BattleTree 是一個縱向單淘汰賽對戰表產生器。使用者可以建立多份對戰表、編輯參賽選手、依編號或隨機抽籤產生賽程，並在瀏覽器中記錄勝負與比分。
+BattleTree 是一個純前端單淘汰賽對戰表工具。它支援建立多份對戰表、設定參賽名單、依序或隨機產生賽程、分組賽程、對戰表縮放拖曳、勝者與比分紀錄、抽籤展示、JPG 匯出，以及可替換 Logo / 背景圖的風格設定。
 
-對戰表採用「第一輪在底部、冠軍在頂部」的樹狀視覺呈現，適合用在桌遊、卡牌、電競、社團活動或小型賽事的現場賽程管理。
+目前沒有後端服務，對戰表資料存在 `localStorage`，圖片資產存在 `IndexedDB`。
 
 ## 功能特色
 
-- 建立、切換、刪除多份對戰表
-- 支援 2 至 64 位參賽者
-- 自動補齊 2 的次方賽程大小，未滿位時產生 bye
-- 依選手編號排位或隨機抽籤排位
-- 重新抽籤並清空既有比賽結果
-- 點選選手即可標記勝方並推進下一輪
-- 已產生勝方的比賽可輸入比分
-- 自動顯示冠軍
-- 對戰表可拖曳平移、縮放、重置、適合畫面
-- 支援全螢幕檢視
-- 支援下載 JPG 圖片
-- 內建抽籤展示功能，可從全部選手或指定輪次敗者中抽出名單
-- 使用 localStorage 儲存資料，重新整理後仍會保留對戰表
+- 首頁開場畫面，顯示 BattleTree Logo 與「開始對戰」按鈕。
+- 重新整理後會保留目前所在頁面，不會強制回首頁。
+- Header 左上角 Logo 可回首頁，並詢問是否保留目前輸入內容。
+- 預設建立 4 位參賽者。
+- 參賽人數最少 2 人，目前沒有 64 人限制。
+- 編號由系統產生並顯示，不可編輯。
+- 支援依序配對與隨機抽籤配對。
+- 支援不分組、2 組、4 組、8 組。
+- 分組對戰表使用分頁切換組別與總決賽，避免大量組別同時擠在畫面上。
+- 對戰表支援標準、橫向、分組視角。
+- 對戰表可拖曳平移、縮放、重置、適合畫面。
+- 桌機支援全螢幕與下載 JPG。
+- 手機版隱藏不適合手機的全螢幕與縮放控制，保留重置與適合畫面。
+- 抽籤功能支援名單預覽、勾選排除、華麗抽籤動畫與抽中彩花。
+- 風格設定支援多組主題、暗色模式、自訂 Header Logo、自訂背景圖片。
+- 背景圖片支援多種呈現方式，包含完整顯示、填滿置中、填滿靠上、原始置中。
 
 ## 技術棧
 
@@ -27,21 +30,17 @@ BattleTree 是一個縱向單淘汰賽對戰表產生器。使用者可以建立
 - @vueuse/core
 - GSAP
 - html-to-image
+- IndexedDB
+- localStorage
 
 ## 快速開始
-
-請先確認本機已安裝 Node.js 與 npm。
 
 ```bash
 npm install
 npm run dev
 ```
 
-啟動後依照終端機顯示的 Vite URL 開啟瀏覽器，通常會是：
-
-```text
-http://localhost:5173/
-```
+Vite 預設會啟動本機開發伺服器。此專案設定了 base path，開發時依終端機顯示 URL 開啟即可。
 
 ## 可用指令
 
@@ -65,45 +64,130 @@ npm run preview
 
 ## 使用流程
 
-1. 在上方工具列輸入比賽名稱。
-2. 設定參賽人數，範圍為 2 至 64 人。
-3. 編輯每位選手的編號與姓名。
-4. 選擇配對方式：
-   - `依序配對`：依照選手編號排序後產生種子排位。
-   - `隨機抽籤`：先打亂選手，再套用賽程排位。
-5. 點選「產生對戰表」。
-6. 在對戰表中點選選手名稱標記勝方。
-7. 勝方產生後，可在該場比賽輸入比分。
-8. 需要輸出時，可使用「全螢幕」或「下載 JPG」。
-
-## 抽籤功能
-
-工具列的「抽籤」會開啟抽籤展示視窗。
-
-可抽籤的名單來源包含：
-
-- 全部選手
-- 已有結果的指定輪次敗者
-
-抽籤前需要先確認名單。開始後可以逐一抽出選手，已抽出的選手會從剩餘名單中移除，並顯示在「已抽出」清單中。
+1. 在首頁點擊「開始對戰」。
+2. 在設定頁輸入比賽名稱。
+3. 設定參賽人數，系統會自動建立名單。
+4. 編輯選手姓名。編號固定顯示，不可修改。
+5. 選擇配對方式：
+   - `依序配對`：依照編號排序後產生種子排位。
+   - `隨機抽籤`：洗牌選手後產生種子排位。
+6. 選擇分組數：
+   - `不分組`
+   - `2 組`
+   - `4 組`
+   - `8 組`
+7. 點擊「產生對戰表」。
+8. 在對戰表中點擊勝者按鈕推進下一輪。
+9. 已有結果的比賽可輸入比分。
+10. 需要輸出時，在桌機使用全螢幕或下載 JPG。
 
 ## 對戰表規則
 
 - 目前支援單淘汰賽制。
 - 參賽人數不必剛好是 2 的次方。
-- 系統會將賽程大小補齊到下一個 2 的次方，例如 9 人會產生 16 人表。
-- 空位會視為 bye，選手會自動晉級。
-- 修改選手資料或配對方式後，已產生的對戰表會回到設定狀態，並清空既有賽果。
-- 變更某一輪勝方時，後續輪次的結果會被清除，避免晉級資料不一致。
+- 系統會補齊到下一個 2 的次方，例如 9 人會產生 16 人表。
+- 空位視為 bye，選手會自動晉級。
+- 修改選手、配對方式、分組數後，已產生的對戰表會回到設定狀態並清空既有賽果。
+- 改變某場勝者時，後續輪次中不合法的結果會被清除，避免晉級資料不一致。
+- 分組時會先在各組內產生小型單淘汰表，再由各組勝者進入總決賽。
+
+## 視角與操作
+
+對戰表目前有三種呈現方式：
+
+- `標準`：縱向樹狀，由下往上收斂到冠軍。
+- `橫向`：以橫向輪次排列，適合部分寬螢幕檢視。
+- `分組`：分頁顯示各組與總決賽，適合大量參賽者。
+
+操作能力：
+
+- 滑鼠拖曳平移。
+- 滾輪縮放。
+- 桌機工具列可縮小、放大、重置、適合畫面。
+- 手機保留重置與適合畫面，避免工具列過度擁擠。
+- 勝者選取不會自動把畫面重設成適合畫面。
+
+## 抽籤功能
+
+工具列的「抽籤」會開啟抽籤展示視窗。
+
+名單來源包含：
+
+- 全部選手。
+- 已有結果的指定輪次敗者。
+
+抽籤流程：
+
+1. 先顯示名單預覽。
+2. 名單預設全部勾選。
+3. 取消勾選會把該人移出本次抽籤名單，卡片透明度降至 40%。
+4. 開始抽籤後不可再修改名單。
+5. 抽籤舞台顯示抽籤狀態與抽籤池。
+6. 抽中時顯示彩花動畫。
+7. 抽中者移入已抽出清單。
+
+## 風格設定
+
+Header 最右側與首頁桌機右上角有風格按鈕。點擊後會開啟風格設定彈窗。
+
+彈窗包含：
+
+- 主題色方格選項。
+- 上傳 Header Logo。
+- 還原 Header Logo。
+- 上傳背景圖片。
+- 移除背景圖片。
+- 背景圖片呈現方式。
+
+目前主題：
+
+- 黑白灰
+- 暗色模式
+- 冷藍
+- 森林
+- 赤銅
+
+Logo 規格：
+
+- 只替換進入網站後 Header 左上角 Logo。
+- 首頁 BattleTree Logo 永遠保持預設，不會被商家 Logo 替換。
+- 暗色模式不會改變自訂 Logo 顏色，上傳什麼就顯示什麼。
+- Logo 檔案大小上限為 2MB。
+
+背景圖規格：
+
+- 背景圖會以固定層蓋在頁面後方。
+- 目前背景圖透明度為 50%。
+- 對戰表 viewport 本身有 30% 透明主題底色，讓背景圖仍可透出。
+- 背景圖檔案大小上限為 6MB。
+- 背景圖呈現方式：
+  - `完整`：前景圖片完整顯示；背後同圖用 `cover` 放大填滿、水平垂直置中並 `blur(6px)`。
+  - `填滿`：`cover`，水平垂直置中。
+  - `靠上`：`cover`，水平置中並對齊上方。
+  - `原始`：原始大小，水平垂直置中。
 
 ## 資料儲存
 
-BattleTree 不需要後端服務。對戰表資料會儲存在瀏覽器的 localStorage 中：
+BattleTree 不需要後端服務。
 
-- `battletree:brackets`：所有對戰表資料
-- `battletree:currentId`：目前選取的對戰表 ID
+localStorage：
 
-因此資料只存在目前瀏覽器與目前網域中。若清除瀏覽器資料、更換瀏覽器或更換裝置，既有對戰表不會自動同步。
+- `battletree:brackets`：所有對戰表資料。
+- `battletree:currentId`：目前選取的對戰表 ID。
+- `battletree:view`：目前停留在首頁或應用頁。
+- `battletree:theme`：目前主題。
+- `battletree:background-fit`：背景圖片呈現方式。
+
+IndexedDB：
+
+- DB：`battletree-images`
+- Object store：`images`
+- `custom-logo`：自訂 Header Logo 圖片 Blob。
+- `background-image`：自訂背景圖片 Blob。
+
+圖片顯示時會使用 `URL.createObjectURL(blob)` 產生暫時 URL，替換或移除時會釋放舊 object URL。
+
+資料只存在目前瀏覽器與目前網域中。若清除瀏覽器資料、更換瀏覽器或更換裝置，資料不會自動同步。
 
 ## 專案結構
 
@@ -111,12 +195,11 @@ BattleTree 不需要後端服務。對戰表資料會儲存在瀏覽器的 local
 .
 ├── public/
 │   ├── favicon.svg
-│   └── icons.svg
+│   └── logo.png
 ├── src/
 │   ├── assets/
-│   │   ├── hero.png
-│   │   ├── vite.svg
-│   │   └── vue.svg
+│   │   ├── logo.svg
+│   │   └── logo-w.svg
 │   ├── components/
 │   │   ├── BracketListModal.vue
 │   │   ├── BracketSetup.vue
@@ -125,11 +208,13 @@ BattleTree 不需要後端服務。對戰表資料會儲存在瀏覽器的 local
 │   │   ├── MatchCard.vue
 │   │   ├── PlayerSlot.vue
 │   │   ├── ScorePopover.vue
+│   │   ├── ThemePicker.vue
 │   │   └── Toolbar.vue
 │   ├── composables/
 │   │   ├── useBracketEngine.js
 │   │   ├── useBracketExport.js
 │   │   ├── useBrackets.js
+│   │   ├── useImageStorage.js
 │   │   ├── useLottery.js
 │   │   └── usePanZoom.js
 │   ├── App.vue
@@ -143,30 +228,25 @@ BattleTree 不需要後端服務。對戰表資料會儲存在瀏覽器的 local
 
 ## 核心模組說明
 
-- `src/App.vue`：應用程式主入口，串接工具列、設定頁、對戰表、列表彈窗與抽籤彈窗。
-- `src/components/BracketSetup.vue`：參賽人數、選手資料與配對方式設定。
-- `src/components/BracketView.vue`：對戰表畫布、連線、縮放、拖曳與冠軍顯示。
-- `src/components/MatchCard.vue`：單場比賽卡片，負責勝方選取與比分入口。
-- `src/components/LotteryModal.vue`：抽籤展示介面。
-- `src/composables/useBracketEngine.js`：賽程大小、種子排序、bye、晉級、冠軍與賽果清理等核心邏輯。
-- `src/composables/useBrackets.js`：對戰表 CRUD、localStorage 儲存、選手更新與賽果更新。
+- `src/App.vue`：應用主入口，管理首頁/應用狀態、主題、圖片資產、工具列、設定頁、對戰表與彈窗。
+- `src/components/Toolbar.vue`：Header 工具列與風格設定入口。
+- `src/components/ThemePicker.vue`：風格設定彈窗，處理主題切換、Logo 上傳、背景上傳與背景模式切換。
+- `src/components/BracketSetup.vue`：比賽名稱、參賽人數、配對方式、分組數與選手名單設定。
+- `src/components/BracketView.vue`：對戰表畫布、視角切換、SVG 連線、分組分頁、縮放拖曳與冠軍顯示。
+- `src/components/MatchCard.vue`：單場比賽卡片。
+- `src/components/PlayerSlot.vue`：選手顯示、勝敗狀態與晉級按鈕。
+- `src/components/ScorePopover.vue`：比分輸入。
+- `src/components/LotteryModal.vue`：抽籤展示與抽籤動畫。
+- `src/composables/useBracketEngine.js`：賽程大小、種子排序、bye、分組、晉級、冠軍與賽果清理等核心邏輯。
+- `src/composables/useBrackets.js`：對戰表 CRUD、localStorage 儲存、選手更新、分組更新與賽果更新。
+- `src/composables/useImageStorage.js`：IndexedDB 圖片儲存。
 - `src/composables/useBracketExport.js`：全螢幕與 JPG 匯出。
 - `src/composables/useLottery.js`：抽籤名單、動畫狀態與抽出結果管理。
 - `src/composables/usePanZoom.js`：對戰表平移與縮放操作。
 
-## 建置輸出
-
-正式版建置會由 Vite 產生靜態檔案：
-
-```bash
-npm run build
-```
-
-完成後可將 `dist/` 部署到任何靜態網站服務，例如 Nginx、Netlify、Vercel 或 GitHub Pages。
-
 ## 注意事項
 
 - 目前沒有帳號系統、伺服器同步或多人協作功能。
-- JPG 匯出會以目前對戰表畫布為來源，並使用 2 倍 pixel ratio 輸出。
-- 全螢幕能力取決於瀏覽器是否支援 Fullscreen API。
-- localStorage 容量有限，不適合儲存大量長期賽事資料。
+- JPG 匯出使用目前對戰表 DOM 為來源，並以 2 倍 pixel ratio 輸出。
+- 全螢幕能力取決於瀏覽器 Fullscreen API；手機版已隱藏相關按鈕。
+- localStorage / IndexedDB 均屬瀏覽器本地資料，不適合跨裝置同步。
