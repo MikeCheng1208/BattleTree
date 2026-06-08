@@ -3,6 +3,9 @@ export function createId(prefix = 'id') {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
+export const THIRD_PLACE_MATCH_ID = 'third-place'
+export const REPECHAGE_MATCH_PREFIX = 'repechage-'
+
 export function getBracketSize(count) {
   if (count <= 2) return 2
   return 2 ** Math.ceil(Math.log2(count))
@@ -19,7 +22,14 @@ export function getSeedOrder(size) {
 export function shufflePlayers(players) {
   const next = [...players]
   for (let i = next.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1))
+    const range = i + 1
+    let randomValue = Math.random()
+    if (globalThis.crypto?.getRandomValues) {
+      const values = new Uint32Array(1)
+      globalThis.crypto.getRandomValues(values)
+      randomValue = values[0] / 2 ** 32
+    }
+    const j = Math.floor(randomValue * range)
     ;[next[i], next[j]] = [next[j], next[i]]
   }
   return next
@@ -27,6 +37,91 @@ export function shufflePlayers(players) {
 
 export function sortPlayersBySeed(players) {
   return [...players].sort((a, b) => Number(a.seed) - Number(b.seed))
+}
+
+function createSequentialSlots(players, size) {
+  const slots = Array.from({ length: size }, () => null)
+  players.forEach((player, index) => {
+    slots[index] = player.id
+  })
+  return slots
+}
+
+export function analyzeRepechageTargets(slots, groupCount = 1) {
+  let states = (slots ?? []).map((playerId, index) => ({
+    active: Boolean(playerId),
+    byeStreak: 0,
+    startSlot: index,
+    slotCount: 1,
+  }))
+  const targets = []
+  let roundIndex = 0
+
+  while (states.length >= 2) {
+    const nextStates = []
+    for (let matchIndex = 0; matchIndex < states.length / 2; matchIndex += 1) {
+      const sideA = states[matchIndex * 2]
+      const sideB = states[matchIndex * 2 + 1]
+      const activeSides = Number(sideA.active) + Number(sideB.active)
+      let nextState
+
+      if (activeSides === 2) {
+        nextState = {
+          active: true,
+          byeStreak: 0,
+          startSlot: sideA.startSlot,
+          slotCount: sideA.slotCount + sideB.slotCount,
+        }
+      } else if (activeSides === 1) {
+        const activeSide = sideA.active ? sideA : sideB
+        const emptySide = sideA.active ? 1 : 0
+        const needsRepechage = activeSide.byeStreak >= 1
+        if (needsRepechage) {
+          const initialSlotsPerGroup = (slots?.length ?? 0) / Math.max(1, Number(groupCount) || 1)
+          const targetStartSlot = sideA.startSlot
+          targets.push({
+            id: `repechage-target-${targets.length}`,
+            targetRoundIndex: roundIndex,
+            targetMatchIndex: matchIndex,
+            targetSide: emptySide,
+            groupIndex:
+              Number(groupCount) > 1 && initialSlotsPerGroup
+                ? Math.min(Number(groupCount) - 1, Math.floor(targetStartSlot / initialSlotsPerGroup))
+                : null,
+          })
+        }
+        nextState = {
+          active: true,
+          byeStreak: needsRepechage ? 0 : activeSide.byeStreak + 1,
+          startSlot: sideA.startSlot,
+          slotCount: sideA.slotCount + sideB.slotCount,
+        }
+      } else {
+        nextState = {
+          active: false,
+          byeStreak: 0,
+          startSlot: sideA.startSlot,
+          slotCount: sideA.slotCount + sideB.slotCount,
+        }
+      }
+
+      nextStates.push(nextState)
+    }
+    states = nextStates
+    roundIndex += 1
+  }
+
+  return targets
+}
+
+export function getRepechageRequirements(players, pairingMode = 'order', groupCount = 1) {
+  const { slotsData } = createGroupedSlots(players, pairingMode === 'random' ? 'order' : pairingMode, groupCount)
+  const targets = analyzeRepechageTargets(slotsData.slots, groupCount)
+  return {
+    targets,
+    matchCount: targets.length,
+    playerCount: targets.length * 2,
+  }
 }
 
 export function validatePlayers(players) {
@@ -37,8 +132,9 @@ export function validatePlayers(players) {
   players.forEach((player, index) => {
     const seed = Number(player.seed)
     if (!player.name?.trim()) errors.push(`第 ${index + 1} 位選手需要姓名`)
-    if (!Number.isInteger(seed) || seed < 1 || seed > players.length) {
-      errors.push(`第 ${index + 1} 位選手編號需為 1 至 ${players.length} 的整數`)
+    if (!Number.isInteger(seed) || seed < 1) {
+      errors.push(`第 ${index + 1} 位選手編號需為正整數`)
+      return
     }
     if (seen.has(seed)) errors.push(`編號 ${seed} 重複`)
     seen.add(seed)
@@ -56,14 +152,7 @@ export function createGroupedSlots(players, pairingMode = 'order', groupCount = 
   const orderedPlayers = pairingMode === 'random' ? shufflePlayers(players) : sortPlayersBySeed(players)
   const safeGroupCount = Math.max(1, Math.min(Number(groupCount) || 1, Math.floor(players.length / 2) || 1))
   if (safeGroupCount <= 1) {
-    const seedOrder = getSeedOrder(bracketSize)
-    const slots = Array.from({ length: bracketSize }, () => null)
-
-    orderedPlayers.forEach((player, index) => {
-      const seedNumber = index + 1
-      const slotIndex = seedOrder.indexOf(seedNumber)
-      slots[slotIndex] = player.id
-    })
+    const slots = createSequentialSlots(orderedPlayers, bracketSize)
 
     return {
       slotsData: { bracketSize, slots },
@@ -78,7 +167,6 @@ export function createGroupedSlots(players, pairingMode = 'order', groupCount = 
 
   for (let groupIndex = 0; groupIndex < safeGroupCount; groupIndex += 1) {
     const groupPlayers = orderedPlayers.slice(groupIndex * groupPlayerCount, (groupIndex + 1) * groupPlayerCount)
-    const seedOrder = getSeedOrder(groupSlotCount)
     const startSlot = groupIndex * groupSlotCount
     groups.push({
       label: getGroupLabel(groupIndex),
@@ -87,8 +175,7 @@ export function createGroupedSlots(players, pairingMode = 'order', groupCount = 
       playerCount: groupPlayers.length,
     })
     groupPlayers.forEach((player, index) => {
-      const slotIndex = seedOrder.indexOf(index + 1)
-      slots[startSlot + slotIndex] = player.id
+      slots[startSlot + index] = player.id
     })
   }
 
@@ -118,7 +205,8 @@ export function getBracketGroups(bracket) {
   }))
 }
 
-function resolveSlot(slot, previousWinners) {
+function resolveSlot(slot, previousWinners, injectedPlayerId = null) {
+  if (injectedPlayerId) return { playerId: injectedPlayerId, pending: false, sourceMatchId: null }
   if (slot === null) return { playerId: null, pending: false, sourceMatchId: null }
   if (typeof slot === 'string') return { playerId: slot, pending: false, sourceMatchId: null }
   const winner = previousWinners.get(slot.fromMatchId)
@@ -129,9 +217,30 @@ function resolveSlot(slot, previousWinners) {
   }
 }
 
+function getRepechageWinnerMap(bracket) {
+  const winnerMap = new Map()
+  const matches = bracket?.repechage?.matches ?? []
+  matches.forEach((match) => {
+    const result = bracket?.results?.[match.id]
+    if (!result) return
+    const winnerId = result.winnerSlot === 0 ? match.playerAId : match.playerBId
+    if (winnerId) winnerMap.set(match.targetId, winnerId)
+  })
+  return winnerMap
+}
+
 function getManualWinner(match, result) {
   if (!result || result.winnerSlot === null || result.winnerSlot === undefined) return null
   return result.winnerSlot === 0 ? match.playerA : match.playerB
+}
+
+function getMatchLoserId(match) {
+  if (!match?.isPlayable || !match.winnerId) return null
+  return match.winnerId === match.playerA ? match.playerB : match.playerA
+}
+
+function getSourceMatchId(slot) {
+  return typeof slot === 'object' && slot ? slot.fromMatchId : null
 }
 
 export function deriveRounds(bracket) {
@@ -140,6 +249,8 @@ export function deriveRounds(bracket) {
   const rounds = []
   let currentSlots = slots
   let previousWinners = new Map()
+  const repechageWinnerMap = getRepechageWinnerMap(bracket)
+  const repechageTargets = bracket?.repechage?.targets ?? []
   let roundIndex = 0
 
   while (currentSlots.length >= 2) {
@@ -151,13 +262,29 @@ export function deriveRounds(bracket) {
       const id = `r${roundIndex}-m${matchIndex}`
       const slotA = currentSlots[matchIndex * 2]
       const slotB = currentSlots[matchIndex * 2 + 1]
-      const resolvedA = resolveSlot(slotA, previousWinners)
-      const resolvedB = resolveSlot(slotB, previousWinners)
+      const targetA = repechageTargets.find(
+        (target) =>
+          target.targetRoundIndex === roundIndex &&
+          target.targetMatchIndex === matchIndex &&
+          target.targetSide === 0,
+      )
+      const targetB = repechageTargets.find(
+        (target) =>
+          target.targetRoundIndex === roundIndex &&
+          target.targetMatchIndex === matchIndex &&
+          target.targetSide === 1,
+      )
+      const resolvedA = resolveSlot(slotA, previousWinners, repechageWinnerMap.get(targetA?.id))
+      const resolvedB = resolveSlot(slotB, previousWinners, repechageWinnerMap.get(targetB?.id))
       const hasPlayerA = Boolean(resolvedA.playerId)
       const hasPlayerB = Boolean(resolvedB.playerId)
-      const isBye = (hasPlayerA && slotB === null) || (hasPlayerB && slotA === null)
       const isWaiting = resolvedA.pending || resolvedB.pending
-      const isPlayable = hasPlayerA && hasPlayerB && !isWaiting
+      const waitsForRepechage =
+        Boolean(targetA && !repechageWinnerMap.get(targetA.id)) ||
+        Boolean(targetB && !repechageWinnerMap.get(targetB.id))
+      const isBye = !isWaiting && !waitsForRepechage && ((hasPlayerA && !hasPlayerB) || (hasPlayerB && !hasPlayerA))
+      const isPlayable = hasPlayerA && hasPlayerB && !isWaiting && !waitsForRepechage
+      const isEmpty = !hasPlayerA && !hasPlayerB && !isWaiting && !waitsForRepechage
       const result = results[id] ?? null
 
       let winnerId = null
@@ -174,14 +301,16 @@ export function deriveRounds(bracket) {
         playerB: resolvedB.playerId,
         winnerId,
         isBye,
+        isEmpty,
         isWaiting,
+        waitsForRepechage,
         isPlayable,
         result,
       }
 
       matches.push(match)
       currentWinners.set(id, winnerId)
-      nextSlots.push({ fromMatchId: id })
+      nextSlots.push(hasPlayerA || hasPlayerB || resolvedA.pending || resolvedB.pending ? { fromMatchId: id } : null)
     }
 
     rounds.push(matches)
@@ -194,10 +323,122 @@ export function deriveRounds(bracket) {
   return rounds
 }
 
+export function getFirstRoundState(bracket) {
+  const firstRound = deriveRounds(bracket)[0] ?? []
+  const playableMatches = firstRound.filter((match) => match.isPlayable || match.result)
+  const completedMatches = playableMatches.filter((match) => match.winnerId)
+  const loserIds = completedMatches.map(getMatchLoserId).filter(Boolean)
+  return {
+    total: playableMatches.length,
+    completed: completedMatches.length,
+    complete: playableMatches.length > 0 && completedMatches.length === playableMatches.length,
+    loserIds,
+  }
+}
+
+export function getRepechageMatches(bracket) {
+  return (bracket?.repechage?.matches ?? []).map((match, index) => {
+    const result = bracket?.results?.[match.id] ?? null
+    const winnerId = getManualWinner(
+      { playerA: match.playerAId, playerB: match.playerBId },
+      result,
+    )
+    return {
+      id: match.id || `${REPECHAGE_MATCH_PREFIX}${index}`,
+      roundIndex: -1,
+      matchIndex: index,
+      slotA: match.playerAId,
+      slotB: match.playerBId,
+      playerA: match.playerAId,
+      playerB: match.playerBId,
+      winnerId,
+      isBye: false,
+      isEmpty: false,
+      isWaiting: false,
+      isPlayable: Boolean(match.playerAId && match.playerBId),
+      isRepechage: true,
+      targetId: match.targetId,
+      result,
+    }
+  })
+}
+
 export function getChampionId(bracket) {
   const rounds = deriveRounds(bracket)
   const finalRound = rounds[rounds.length - 1]
   return finalRound?.[0]?.winnerId ?? null
+}
+
+export function getThirdPlaceMatch(bracket) {
+  const rounds = deriveRounds(bracket)
+  if (rounds.length < 2) return null
+
+  const finalMatch = rounds[rounds.length - 1]?.[0]
+  if (!finalMatch) return null
+
+  const matchMap = new Map(rounds.flat().map((match) => [match.id, match]))
+  const findFinalistBranchLoser = (sourceMatchId, finalistId, seen = new Set()) => {
+    if (!sourceMatchId || seen.has(sourceMatchId)) return null
+    seen.add(sourceMatchId)
+
+    const match = matchMap.get(sourceMatchId)
+    if (!match || match.winnerId !== finalistId) return null
+
+    const loserId = getMatchLoserId(match)
+    if (loserId) return loserId
+
+    let nextSource = getSourceMatchId(match.slotA) ?? getSourceMatchId(match.slotB)
+    if (match.playerA === finalistId) nextSource = getSourceMatchId(match.slotA)
+    if (match.playerB === finalistId) nextSource = getSourceMatchId(match.slotB)
+    return findFinalistBranchLoser(nextSource, finalistId, seen)
+  }
+
+  const playerA = findFinalistBranchLoser(getSourceMatchId(finalMatch.slotA), finalMatch.playerA)
+  const playerB = findFinalistBranchLoser(getSourceMatchId(finalMatch.slotB), finalMatch.playerB)
+  if (!playerA || !playerB) return null
+
+  const result = bracket?.results?.[THIRD_PLACE_MATCH_ID] ?? null
+  const winnerId = getManualWinner({ playerA, playerB }, result)
+
+  return {
+    id: THIRD_PLACE_MATCH_ID,
+    roundIndex: rounds.length,
+    matchIndex: 0,
+    slotA: playerA,
+    slotB: playerB,
+    playerA,
+    playerB,
+    winnerId,
+    isBye: false,
+    isEmpty: false,
+    isWaiting: false,
+    isPlayable: true,
+    isThirdPlace: true,
+    result,
+  }
+}
+
+export function getPodium(bracket) {
+  const rounds = deriveRounds(bracket)
+  const finalMatch = rounds[rounds.length - 1]?.[0]
+  const thirdPlaceMatch = getThirdPlaceMatch(bracket)
+  const championId = finalMatch?.winnerId ?? null
+  const runnerUpId = getMatchLoserId(finalMatch)
+  const thirdPlaceId = thirdPlaceMatch?.winnerId ?? null
+  const fourthPlaceId =
+    thirdPlaceMatch?.winnerId === thirdPlaceMatch?.playerA
+      ? thirdPlaceMatch?.playerB
+      : thirdPlaceMatch?.winnerId === thirdPlaceMatch?.playerB
+        ? thirdPlaceMatch?.playerA
+        : null
+
+  return {
+    championId,
+    runnerUpId,
+    thirdPlaceId,
+    fourthPlaceId,
+    thirdPlaceMatch,
+  }
 }
 
 export function sanitizeResults(bracket) {
@@ -205,6 +446,32 @@ export function sanitizeResults(bracket) {
   const validResults = {}
 
   rounds.flat().forEach((match) => {
+    const result = bracket.results?.[match.id]
+    if (!result || !match.isPlayable) return
+    const winnerId = result.winnerSlot === 0 ? match.playerA : match.playerB
+    if (winnerId) {
+      validResults[match.id] = {
+        winnerSlot: result.winnerSlot,
+        scoreA: result.scoreA ?? null,
+        scoreB: result.scoreB ?? null,
+      }
+    }
+  })
+
+  const thirdPlaceMatch = getThirdPlaceMatch(bracket)
+  const thirdPlaceResult = bracket.results?.[THIRD_PLACE_MATCH_ID]
+  if (thirdPlaceMatch?.isPlayable && thirdPlaceResult) {
+    const winnerId = thirdPlaceResult.winnerSlot === 0 ? thirdPlaceMatch.playerA : thirdPlaceMatch.playerB
+    if (winnerId) {
+      validResults[THIRD_PLACE_MATCH_ID] = {
+        winnerSlot: thirdPlaceResult.winnerSlot,
+        scoreA: thirdPlaceResult.scoreA ?? null,
+        scoreB: thirdPlaceResult.scoreB ?? null,
+      }
+    }
+  }
+
+  getRepechageMatches(bracket).forEach((match) => {
     const result = bracket.results?.[match.id]
     if (!result || !match.isPlayable) return
     const winnerId = result.winnerSlot === 0 ? match.playerA : match.playerB
@@ -249,5 +516,6 @@ export function buildInitialPlayers(count) {
     id: createId('player'),
     name: `Player${index + 1}`,
     seed: index + 1,
+    registrationConfirmed: false,
   }))
 }

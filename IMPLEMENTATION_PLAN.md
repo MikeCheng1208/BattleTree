@@ -176,10 +176,22 @@ localStorage keys：
   status: 'setup' | 'ready',
 
   players: [
-    { id: string, name: string, seed: number }
+    {
+      id: string,
+      name: string,
+      seed: number,
+      registrationConfirmed: boolean
+    }
   ],
   pairingMode: 'order' | 'random',
   groupCount: 1 | 2 | 4 | 8,
+  repechage: {
+    enabled: boolean,
+    selectionMode: 'random' | 'manual',
+    targets: RepechageTarget[],
+    selectedPlayerIds: string[],
+    matches: RepechageMatch[]
+  },
 
   bracketSize: number,
   slots: (string | null)[],
@@ -201,15 +213,24 @@ localStorage keys：
 }
 ```
 
+特殊結果：
+
+- `third-place`：第三名爭奪戰結果，來源為總決賽兩側來源場次的敗者。
+- `repechage-${number}`：敗部復活賽結果，勝者會補入對應 target。
+
 資料規則：
 
 - 預設參賽人數：4。
 - 參賽人數最少 2，目前無 64 人上限。
 - `seed` 由系統維護，UI 不可編輯。
-- `seed` 必須是 1 至 N 的唯一整數。
+- `seed` 必須是正整數且不可重複；移除參賽者後可暫時不連續。
+- `registrationConfirmed` 由主辦單位手動切換，用於標記報名是否確認成功。
+- 移除參賽者會刪除該列並保留剩餘參賽者原編號。
+- 點擊「重新排序參賽編號」才會依目前名單順序重編 `seed`。
 - `groupCount` 只允許 1、2、4、8，且不得超過 `Math.floor(players.length / 2)`。
 - `bracketSize` 為產生後 slots 長度。
-- 修改 players、pairingMode、groupCount 後，ready 對戰表回到 setup，並清空 slots/results。
+- 修改 players、移除參賽者、重新排序編號、pairingMode、groupCount 後，ready 對戰表回到 setup，並清空 slots/results。
+- 敗部復活只修正同一支線連續輪空兩次的情況；第一次輪空仍保留。
 
 ---
 
@@ -228,28 +249,22 @@ function getBracketSize(count) {
 }
 ```
 
-### 6.2 標準種子序列
-
-使用遞迴 seeding order 分散強種子與 bye。
-
-```text
-size 2 -> [1, 2]
-size 4 -> [1, 4, 3, 2]
-size 8 -> [1, 8, 4, 5, 3, 6, 7, 2]
-```
+### 6.2 相鄰配對
 
 規則：
 
-- `order`：依 `seed` 升冪排序。
-- `random`：Fisher-Yates 洗牌。
+- `order`：依 `seed` 升冪排序後相鄰配對，例如 1 vs 2、3 vs 4。
+- `random`：Fisher-Yates 洗牌後，依洗牌結果相鄰配對。
 - 未滿 2 次方的空位填 `null`，視為 bye。
+- 空對空分支標記為 `isEmpty`，只保留版面結構，不顯示卡片，也不產生等待中的來源。
+- 啟用敗部復活時，若某支線即將第二次連續輪空，該空位改為等待復活賽勝者。
 
 ### 6.3 分組
 
 `createGroupedSlots(players, pairingMode, groupCount)`：
 
 - `groupCount <= 1`：產生單一對戰表。
-- `groupCount > 1`：依選手順序切成多組。
+- `groupCount > 1`：依選手順序切成多組，各組內使用相鄰配對。
 - 每組補齊到各組所需的 2 次方 slot。
 - 回傳總 slots 與 groups metadata。
 
@@ -274,6 +289,12 @@ matchId：
 `r${roundIndex}-m${matchIndex}`
 ```
 
+第三名爭奪戰使用固定 matchId：
+
+```js
+`third-place`
+```
+
 match 結構：
 
 ```js
@@ -288,9 +309,29 @@ match 結構：
   winnerId,
   result,
   isBye,
+  isEmpty,
+  isWaiting,
   isPlayable
 }
 ```
+
+第三名爭奪戰規則：
+
+- 當總決賽兩側來源場次都已有敗者時，產生第三名爭奪戰。
+- 第三名爭奪戰不參與主對戰樹連線，不影響冠軍戰晉級。
+- 季軍戰與冠軍戰都有結果後，榮譽榜顯示冠軍、亞軍、季軍、第四名。
+- 修改四強或更早結果時，既有季軍戰結果需要清除；只修改冠軍戰結果時保留季軍戰結果。
+
+敗部復活規則：
+
+- 設定頁可啟用敗部復活，並選擇 `random` 或 `manual`。
+- 產生對戰表時自動建立補位 targets；無連續輪空時 targets 為空。
+- 第一輪全部完成後，從第一輪敗者建立復活池。
+- 每個 target 需要 2 位敗者進行 1 場復活賽。
+- 隨機模式由系統抽選；手動模式由主辦指定精確人數後系統隨機配對。
+- 復活賽尚未有結果前可重新選擇；開賽後鎖定。
+- 修改第一輪結果會清除復活名單、配對與復活賽結果。
+- 復活賽卡片直接插入主對戰樹，使用琥珀色視覺樣式。
 
 ### 6.5 連鎖清除
 
@@ -299,6 +340,7 @@ match 結構：
 規則：
 
 - 若後續 result 指向的選手不再存在於該 match 的 A/B，刪除該 result。
+- 若 `third-place` 的選手來源不再合法，刪除該 result。
 - 重複檢查直到所有結果合法。
 
 ---
@@ -368,8 +410,32 @@ src/
 - 內容寬度：900px。
 - 與 Header 上方距離：30px。
 - 比賽名稱位於設定區塊內，參賽人數上方。
+- 支援匯入 CSV，固定讀取 `姓名` 欄位並覆蓋目前名單。
+- CSV 匯入旁提供教學按鈕，點擊後開啟彈窗說明 Google 表單/試算表下載 CSV 流程。
 - 編號不可編輯。
-- 手機版選手列維持編號與姓名同一行，比例約 2:8。
+- 每列顯示編號、姓名、報名確認按鈕與移除按鈕。
+- 報名確認按鈕使用綠色勾勾表示已確認。
+- 移除按鈕會直接刪除該參賽者，剩餘列往上遞補但保留原編號。
+- 提供「重新排序參賽編號」按鈕，點擊後才依目前列順序重新編號。
+- 手機版選手列維持編號、姓名、確認、移除同一行，姓名欄佔主要寬度。
+
+### 8.3.1 CSV 匯入
+
+- 入口位於參賽人數欄位旁。
+- 檔案 input 接受 `.csv,text/csv`。
+- 第一列視為 header。
+- 固定尋找 header 完全等於 `姓名` 的欄位。
+- 匯入後覆蓋目前 players。
+- seed 重新由 1 開始依序產生。
+- 匯入後 ready 對戰表回到 setup，並清空 slots/results/lottery。
+- 空白姓名列忽略。
+- 少於 2 位有效姓名時顯示錯誤。
+- 支援標準 CSV 雙引號、欄位內逗號、欄位內換行。
+- 不匯入 email、電話、時間戳記或其他欄位。
+- 匯入教學彈窗內容：
+  - 從 Google 表單回覆點擊試算表圖示或「在試算表中查看」。
+  - 在 Google 試算表點選「檔案」→「下載」→「逗號分隔值檔案 (.csv)」。
+  - 回到 BattleTree 點擊「匯入 CSV」選擇檔案。
 
 ### 8.4 對戰表
 
@@ -428,9 +494,16 @@ src/
 - 重新整理後停留在目前頁面。
 - 預設參賽人數是 4。
 - 可設定 2 人以上參賽者。
+- 可從 Google 試算表 CSV 匯入 `姓名` 欄，並覆蓋目前名單。
+- CSV 缺少 `姓名` 欄時顯示錯誤。
+- CSV 有效姓名少於 2 位時顯示錯誤。
 - 編號不可編輯。
+- 可切換報名確認狀態，且狀態會保存。
+- 可移除參賽者，移除後剩餘參賽者原編號保留。
+- 可點擊重新排序參賽編號，將目前名單重編為連續編號。
 - 修改姓名可正常保存。
 - 依序配對與隨機配對皆可產生對戰表。
+- 10 人依序配對第一輪應為 1 vs 2、3 vs 4、5 vs 6、7 vs 8、9 vs 10。
 
 ### 11.2 分組與視角
 

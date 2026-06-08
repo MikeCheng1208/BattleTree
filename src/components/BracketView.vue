@@ -2,7 +2,14 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useResizeObserver } from '@vueuse/core'
 import MatchCard from './MatchCard.vue'
-import { deriveRounds, getBracketGroups, getChampionId, getPlayerMap } from '../composables/useBracketEngine'
+import {
+  deriveRounds,
+  getBracketGroups,
+  getFirstRoundState,
+  getPlayerMap,
+  getPodium,
+  getRepechageMatches,
+} from '../composables/useBracketEngine'
 import { usePanZoom } from '../composables/usePanZoom'
 
 const VIEW_MODES = [
@@ -18,7 +25,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['set-result', 'update-score', 'reshuffle'])
+const emit = defineEmits(['set-result', 'update-score', 'reshuffle', 'configure-repechage', 'reset-repechage'])
 
 const viewportRef = ref(null)
 const contentRef = ref(null)
@@ -28,6 +35,10 @@ const lines = ref([])
 const scoreLabels = ref([])
 const viewMode = ref('ladder')
 const activeGroupTab = ref('group-0')
+const showRepechageManager = ref(false)
+const showRepechagePrompt = ref(false)
+const dismissedRepechagePromptKey = ref('')
+const manualRepechageSelection = ref([])
 
 const rounds = computed(() => deriveRounds(props.bracket))
 const displayRounds = computed(() => (viewMode.value === 'ladder' ? [...rounds.value].reverse() : rounds.value))
@@ -37,7 +48,40 @@ const availableViewModes = computed(() =>
   bracketGroups.value.length > 1 ? VIEW_MODES : VIEW_MODES.filter((mode) => mode.value !== 'groups'),
 )
 const playerMap = computed(() => getPlayerMap(props.bracket.players))
-const champion = computed(() => playerMap.value[getChampionId(props.bracket)] ?? null)
+const podium = computed(() => getPodium(props.bracket))
+const champion = computed(() => playerMap.value[podium.value.championId] ?? null)
+const runnerUp = computed(() => playerMap.value[podium.value.runnerUpId] ?? null)
+const thirdPlace = computed(() => playerMap.value[podium.value.thirdPlaceId] ?? null)
+const fourthPlace = computed(() => playerMap.value[podium.value.fourthPlaceId] ?? null)
+const thirdPlaceMatch = computed(() => podium.value.thirdPlaceMatch)
+const firstRoundState = computed(() => getFirstRoundState(props.bracket))
+const repechageTargets = computed(() => props.bracket.repechage?.targets ?? [])
+const repechageMatches = computed(() => getRepechageMatches(props.bracket))
+const repechageRequiredPlayerCount = computed(() => repechageTargets.value.length * 2)
+const repechageSelectionMode = computed(() => props.bracket.repechage?.selectionMode ?? 'random')
+const repechageStarted = computed(() => repechageMatches.value.some((match) => Boolean(match.result)))
+const repechageReady = computed(() => repechageMatches.value.length === repechageTargets.value.length)
+const repechagePromptKey = computed(() => {
+  if (!props.bracket.repechage?.enabled || !repechageTargets.value.length) return ''
+  if (!firstRoundState.value.complete || repechageReady.value) return ''
+  return `${props.bracket.id}:${repechageTargets.value.map((target) => target.id).join('|')}:${firstRoundState.value.loserIds.join('|')}`
+})
+const repechageStatusText = computed(() => {
+  if (!props.bracket.repechage?.enabled) return ''
+  if (!repechageTargets.value.length) return '本賽程無需敗部復活'
+  if (!firstRoundState.value.complete) {
+    return `第一輪 ${firstRoundState.value.completed} / ${firstRoundState.value.total}`
+  }
+  if (!repechageReady.value) return '設定敗部復活'
+  if (!repechageStarted.value) return '敗部復活待開賽'
+  return '敗部復活進行中'
+})
+const repechageCandidates = computed(() =>
+  firstRoundState.value.loserIds.map((id) => playerMap.value[id]).filter(Boolean),
+)
+const repechageMatchByTarget = computed(() =>
+  Object.fromEntries(repechageMatches.value.map((match) => [match.targetId, match])),
+)
 const groupRoundCount = computed(() => {
   const firstGroup = bracketGroups.value[0]
   return firstGroup ? Math.log2(firstGroup.slotCount) : 0
@@ -120,6 +164,49 @@ function getFinalMatchGridStyle(roundLength, matchIndex) {
   }
 }
 
+function getRepechageMatchForMatch(match) {
+  const target = repechageTargets.value.find(
+    (item) => item.targetRoundIndex === match.roundIndex && item.targetMatchIndex === match.matchIndex,
+  )
+  return target ? repechageMatchByTarget.value[target.id] : null
+}
+
+function toggleManualRepechagePlayer(playerId) {
+  if (manualRepechageSelection.value.includes(playerId)) {
+    manualRepechageSelection.value = manualRepechageSelection.value.filter((id) => id !== playerId)
+    return
+  }
+  if (manualRepechageSelection.value.length >= repechageRequiredPlayerCount.value) return
+  manualRepechageSelection.value = [...manualRepechageSelection.value, playerId]
+}
+
+function configureRepechage() {
+  emit(
+    'configure-repechage',
+    repechageSelectionMode.value === 'manual' ? manualRepechageSelection.value : null,
+  )
+  dismissedRepechagePromptKey.value = repechagePromptKey.value
+  showRepechagePrompt.value = false
+  showRepechageManager.value = false
+}
+
+function openRepechageManagerFromPrompt() {
+  dismissedRepechagePromptKey.value = repechagePromptKey.value
+  showRepechagePrompt.value = false
+  showRepechageManager.value = true
+}
+
+function dismissRepechagePrompt() {
+  dismissedRepechagePromptKey.value = repechagePromptKey.value
+  showRepechagePrompt.value = false
+}
+
+function resetRepechage() {
+  if (repechageStarted.value) return
+  manualRepechageSelection.value = []
+  emit('reset-repechage')
+}
+
 async function setViewMode(mode) {
   viewMode.value = mode
   if (mode === 'groups' && !groupTabs.value.some((tab) => tab.value === activeGroupTab.value)) {
@@ -166,6 +253,7 @@ async function updateLines() {
     round.forEach((match) => {
       const parent = rounds.value[roundIndex + 1]?.[Math.floor(match.matchIndex / 2)]
       if (!parent) return
+      if (match.isEmpty || parent.isEmpty) return
       if (!visibleMatchIds.has(match.id) || !visibleMatchIds.has(parent.id)) return
       const childRect = getRect(match.id)
       const parentRect = getRect(parent.id)
@@ -199,6 +287,33 @@ async function updateLines() {
 }
 
 watch(rounds, updateLines, { deep: true, flush: 'post' })
+watch(
+  () => props.bracket.id,
+  () => {
+    showRepechageManager.value = false
+    showRepechagePrompt.value = false
+    dismissedRepechagePromptKey.value = ''
+    manualRepechageSelection.value = []
+  },
+)
+watch(
+  repechagePromptKey,
+  (key) => {
+    if (!key || key === dismissedRepechagePromptKey.value) {
+      showRepechagePrompt.value = false
+      return
+    }
+    showRepechagePrompt.value = true
+  },
+  { immediate: true },
+)
+watch(
+  () => props.bracket.repechage?.selectedPlayerIds,
+  (ids) => {
+    manualRepechageSelection.value = Array.isArray(ids) ? [...ids] : []
+  },
+  { deep: true },
+)
 watch(viewMode, updateLines, { flush: 'post' })
 watch(bracketGroups, (groups) => {
   if (viewMode.value === 'groups' && groups.length <= 1) viewMode.value = 'ladder'
@@ -270,13 +385,89 @@ defineExpose({
         >
           重新抽籤
         </button>
+        <button
+          v-if="bracket.repechage?.enabled"
+          type="button"
+          class="secondary-action repechage-manager-button"
+          @click="showRepechageManager = true"
+        >
+          {{ repechageStatusText }}
+        </button>
       </div>
 
       <div ref="contentRef" class="bracket-panzoom-content" :style="transformStyle">
         <section ref="boardRef" class="bracket-board" :class="`view-${viewMode}`">
-          <div class="champion-strip" :class="{ empty: !champion }">
-            <span>Champion</span>
-            <strong>{{ champion?.name ?? '尚未產生' }}</strong>
+          <div class="finals-summary" :class="{ 'has-third-place': thirdPlaceMatch }">
+            <div class="champion-strip" :class="{ empty: !champion }">
+              <span>榮譽榜</span>
+              <strong>{{ champion?.name ?? '尚未產生' }}</strong>
+              <ol v-if="champion" class="podium-list">
+                <li>
+                  <span class="podium-icon trophy gold" aria-label="第 1 名">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path class="icon-fill" d="M7.2 4.4h9.6v4.1c0 3-1.8 5.2-4.8 6-3-.8-4.8-3-4.8-6V4.4Z" />
+                      <path class="icon-fill" d="M6.9 6.2H3.7v1.5c0 2.8 2.1 5 5 5.2v-2.2c-1.6-.1-2.8-1.4-2.8-3V7.5h1V6.2Z" />
+                      <path class="icon-fill" d="M17.1 6.2h3.2v1.5c0 2.8-2.1 5-5 5.2v-2.2c1.6-.1 2.8-1.4 2.8-3V7.5h-1V6.2Z" />
+                      <path class="icon-fill" d="M10.8 14.1h2.4v3.1h-2.4v-3.1Z" />
+                      <path class="icon-fill" d="M8.6 17.2h6.8l.9 2.4H7.7l.9-2.4Z" />
+                      <path class="icon-shine" d="M9.5 6.2h4.8" />
+                    </svg>
+                  </span>
+                  <strong>{{ champion.name }}</strong>
+                </li>
+                <li v-if="runnerUp">
+                  <span class="podium-icon trophy silver" aria-label="第 2 名">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path class="icon-fill" d="M7.2 4.4h9.6v4.1c0 3-1.8 5.2-4.8 6-3-.8-4.8-3-4.8-6V4.4Z" />
+                      <path class="icon-fill" d="M6.9 6.2H3.7v1.5c0 2.8 2.1 5 5 5.2v-2.2c-1.6-.1-2.8-1.4-2.8-3V7.5h1V6.2Z" />
+                      <path class="icon-fill" d="M17.1 6.2h3.2v1.5c0 2.8-2.1 5-5 5.2v-2.2c1.6-.1 2.8-1.4 2.8-3V7.5h-1V6.2Z" />
+                      <path class="icon-fill" d="M10.8 14.1h2.4v3.1h-2.4v-3.1Z" />
+                      <path class="icon-fill" d="M8.6 17.2h6.8l.9 2.4H7.7l.9-2.4Z" />
+                      <path class="icon-shine" d="M9.5 6.2h4.8" />
+                    </svg>
+                  </span>
+                  <strong>{{ runnerUp.name }}</strong>
+                </li>
+                <li v-if="thirdPlace">
+                  <span class="podium-icon trophy bronze" aria-label="第 3 名">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path class="icon-fill" d="M7.2 4.4h9.6v4.1c0 3-1.8 5.2-4.8 6-3-.8-4.8-3-4.8-6V4.4Z" />
+                      <path class="icon-fill" d="M6.9 6.2H3.7v1.5c0 2.8 2.1 5 5 5.2v-2.2c-1.6-.1-2.8-1.4-2.8-3V7.5h1V6.2Z" />
+                      <path class="icon-fill" d="M17.1 6.2h3.2v1.5c0 2.8-2.1 5-5 5.2v-2.2c1.6-.1 2.8-1.4 2.8-3V7.5h-1V6.2Z" />
+                      <path class="icon-fill" d="M10.8 14.1h2.4v3.1h-2.4v-3.1Z" />
+                      <path class="icon-fill" d="M8.6 17.2h6.8l.9 2.4H7.7l.9-2.4Z" />
+                      <path class="icon-shine" d="M9.5 6.2h4.8" />
+                    </svg>
+                  </span>
+                  <strong>{{ thirdPlace.name }}</strong>
+                </li>
+                <li v-if="fourthPlace">
+                  <span class="podium-icon medal" aria-label="第 4 名">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path class="icon-ribbon left" d="M7.5 3.5h3.2l1.3 6.2-3.1 2-1.4-8.2Z" />
+                      <path class="icon-ribbon right" d="M13.3 3.5h3.2l-1.4 8.2-3.1-2 1.3-6.2Z" />
+                      <circle class="icon-fill" cx="12" cy="15.2" r="5.2" />
+                      <path class="icon-shine" d="M9.7 13.8c.5-.8 1.3-1.3 2.3-1.3" />
+                      <path class="icon-mark" d="M12 12.7l.7 1.5 1.7.2-1.2 1.2.3 1.7-1.5-.8-1.5.8.3-1.7-1.2-1.2 1.7-.2.7-1.5Z" />
+                    </svg>
+                  </span>
+                  <strong>{{ fourthPlace.name }}</strong>
+                </li>
+              </ol>
+            </div>
+
+            <section v-if="thirdPlaceMatch" class="third-place-section">
+              <div class="third-place-title">
+                <span>3rd Place Match</span>
+                <strong>第三名爭奪戰</strong>
+              </div>
+              <MatchCard
+                :match="thirdPlaceMatch"
+                :player-map="playerMap"
+                @set-result="(...args) => emit('set-result', ...args)"
+                @update-score="(...args) => emit('update-score', ...args)"
+              />
+            </section>
           </div>
 
           <svg class="connector-layer" aria-hidden="true">
@@ -311,6 +502,7 @@ defineExpose({
                 :key="match.id"
                 :ref="(el) => setMatchRef(match.id, el)"
                 class="match-shell"
+                :class="{ 'has-repechage': getRepechageMatchForMatch(match) }"
                 :style="getMatchGridStyle(round.length, match.matchIndex)"
               >
                 <div v-if="getMatchGroup(match)" class="group-marker">
@@ -323,6 +515,15 @@ defineExpose({
                   @set-result="(...args) => emit('set-result', ...args)"
                   @update-score="(...args) => emit('update-score', ...args)"
                 />
+                <div v-if="getRepechageMatchForMatch(match)" class="repechage-branch">
+                  <div class="repechage-branch-title">敗部復活</div>
+                  <MatchCard
+                    :match="getRepechageMatchForMatch(match)"
+                    :player-map="playerMap"
+                    @set-result="(...args) => emit('set-result', ...args)"
+                    @update-score="(...args) => emit('update-score', ...args)"
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -362,6 +563,7 @@ defineExpose({
                     :key="match.id"
                     :ref="(el) => setMatchRef(match.id, el)"
                     class="match-shell"
+                    :class="{ 'has-repechage': getRepechageMatchForMatch(match) }"
                     :style="getGroupMatchGridStyle(activeGroupedSection, round.length, matchIndex)"
                   >
                     <MatchCard
@@ -370,6 +572,15 @@ defineExpose({
                       @set-result="(...args) => emit('set-result', ...args)"
                       @update-score="(...args) => emit('update-score', ...args)"
                     />
+                    <div v-if="getRepechageMatchForMatch(match)" class="repechage-branch">
+                      <div class="repechage-branch-title">敗部復活</div>
+                      <MatchCard
+                        :match="getRepechageMatchForMatch(match)"
+                        :player-map="playerMap"
+                        @set-result="(...args) => emit('set-result', ...args)"
+                        @update-score="(...args) => emit('update-score', ...args)"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -391,6 +602,7 @@ defineExpose({
                     :key="match.id"
                     :ref="(el) => setMatchRef(match.id, el)"
                     class="match-shell"
+                    :class="{ 'has-repechage': getRepechageMatchForMatch(match) }"
                     :style="getFinalMatchGridStyle(round.length, matchIndex)"
                   >
                     <MatchCard
@@ -399,6 +611,15 @@ defineExpose({
                       @set-result="(...args) => emit('set-result', ...args)"
                       @update-score="(...args) => emit('update-score', ...args)"
                     />
+                    <div v-if="getRepechageMatchForMatch(match)" class="repechage-branch">
+                      <div class="repechage-branch-title">敗部復活</div>
+                      <MatchCard
+                        :match="getRepechageMatchForMatch(match)"
+                        :player-map="playerMap"
+                        @set-result="(...args) => emit('set-result', ...args)"
+                        @update-score="(...args) => emit('update-score', ...args)"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -407,5 +628,138 @@ defineExpose({
         </section>
       </div>
     </div>
+    <Teleport to="body">
+      <div
+        v-if="showRepechagePrompt"
+        class="modal-backdrop repechage-modal-backdrop"
+        @click.self="dismissRepechagePrompt"
+      >
+        <section class="modal-panel compact repechage-prompt-modal" role="dialog" aria-modal="true">
+          <header class="modal-header">
+            <div>
+              <span class="repechage-prompt-kicker">第一輪已完成</span>
+              <h2>是否使用敗部復活？</h2>
+            </div>
+            <button type="button" class="icon-button" aria-label="關閉" @click="dismissRepechagePrompt">
+              ×
+            </button>
+          </header>
+
+          <div class="repechage-prompt-body">
+            <p>
+              目前賽程偵測到同一支線即將連續輪空，建議建立敗部復活賽，讓第一輪敗者有機會補進該位置。
+            </p>
+            <div class="repechage-prompt-summary">
+              <span>需要 {{ repechageRequiredPlayerCount }} 位第一輪敗者</span>
+              <strong>{{ repechageTargets.length }} 場復活賽</strong>
+            </div>
+          </div>
+
+          <div class="stage-actions">
+            <button type="button" class="primary-action" @click="openRepechageManagerFromPrompt">
+              使用敗部復活
+            </button>
+            <button type="button" class="secondary-action" @click="dismissRepechagePrompt">
+              這次不用
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <div
+        v-if="showRepechageManager"
+        class="modal-backdrop repechage-modal-backdrop"
+        @click.self="showRepechageManager = false"
+      >
+        <section class="modal-panel compact repechage-modal" role="dialog" aria-modal="true">
+          <header class="modal-header">
+            <h2>敗部復活管理</h2>
+            <button type="button" class="icon-button" aria-label="關閉" @click="showRepechageManager = false">
+              ×
+            </button>
+          </header>
+
+          <div class="repechage-modal-body">
+            <div class="repechage-status-card">
+              <span>需求</span>
+              <strong v-if="repechageTargets.length">
+                {{ repechageRequiredPlayerCount }} 人 / {{ repechageTargets.length }} 場
+              </strong>
+              <strong v-else>無需啟動</strong>
+              <p v-if="repechageTargets.length">
+                第一輪完成後，從敗者池產生敗部復活賽，勝者會補進原本連續輪空的場次。
+              </p>
+              <p v-else>目前賽程沒有連續輪空兩次的支線。</p>
+            </div>
+
+            <div v-if="repechageTargets.length" class="repechage-status-card">
+              <span>第一輪進度</span>
+              <strong>{{ firstRoundState.completed }} / {{ firstRoundState.total }}</strong>
+              <p>{{ firstRoundState.complete ? '第一輪已完成，可以設定敗部復活。' : '請先完成所有第一輪可比賽場次。' }}</p>
+            </div>
+
+            <template v-if="repechageTargets.length && firstRoundState.complete">
+              <div v-if="repechageSelectionMode === 'manual'" class="repechage-manual-list">
+                <div class="repechage-list-header">
+                  <strong>手動指定復活名單</strong>
+                  <span>已選 {{ manualRepechageSelection.length }} / {{ repechageRequiredPlayerCount }}</span>
+                </div>
+                <button
+                  v-for="player in repechageCandidates"
+                  :key="player.id"
+                  type="button"
+                  class="repechage-candidate"
+                  :class="{ active: manualRepechageSelection.includes(player.id) }"
+                  :disabled="
+                    repechageStarted ||
+                    (!manualRepechageSelection.includes(player.id) &&
+                      manualRepechageSelection.length >= repechageRequiredPlayerCount)
+                  "
+                  @click="toggleManualRepechagePlayer(player.id)"
+                >
+                  <span>#{{ player.seed }}</span>
+                  <strong>{{ player.name }}</strong>
+                </button>
+              </div>
+
+              <div v-if="repechageMatches.length" class="repechage-pairings">
+                <div class="repechage-list-header">
+                  <strong>復活賽配對</strong>
+                  <span>{{ repechageStarted ? '已開賽' : '尚未開賽' }}</span>
+                </div>
+                <div v-for="match in repechageMatches" :key="match.id" class="repechage-pairing-row">
+                  <span>{{ playerMap[match.playerA]?.name }}</span>
+                  <strong>vs</strong>
+                  <span>{{ playerMap[match.playerB]?.name }}</span>
+                </div>
+              </div>
+
+              <div class="stage-actions">
+                <button
+                  type="button"
+                  class="primary-action"
+                  :disabled="
+                    repechageStarted ||
+                    (repechageSelectionMode === 'manual' &&
+                      manualRepechageSelection.length !== repechageRequiredPlayerCount)
+                  "
+                  @click="configureRepechage"
+                >
+                  {{ repechageSelectionMode === 'manual' ? '確認指定並配對' : '隨機抽選復活名單' }}
+                </button>
+                <button
+                  type="button"
+                  class="secondary-action"
+                  :disabled="repechageStarted || !repechageMatches.length"
+                  @click="resetRepechage"
+                >
+                  重新選擇
+                </button>
+              </div>
+            </template>
+          </div>
+        </section>
+      </div>
+    </Teleport>
   </section>
 </template>

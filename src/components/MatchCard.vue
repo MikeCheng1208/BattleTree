@@ -26,7 +26,10 @@ const hasManualResult = computed(() => Boolean(props.match.result))
 </script>
 
 <template>
-  <article class="match-card" :class="{ resolved: match.winnerId, bye: match.isBye }">
+  <article
+    class="match-card"
+    :class="{ resolved: match.winnerId, bye: match.isBye, empty: match.isEmpty, repechage: match.isRepechage }"
+  >
     <PlayerSlot
       :player="playerA"
       :side="0"

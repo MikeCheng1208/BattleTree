@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import BracketListModal from './components/BracketListModal.vue'
 import BracketSetup from './components/BracketSetup.vue'
 import BracketView from './components/BracketView.vue'
@@ -9,6 +9,7 @@ import Toolbar from './components/Toolbar.vue'
 import battleTreeLogo from './assets/logo.svg'
 import { useBracketExport } from './composables/useBracketExport'
 import { useBrackets } from './composables/useBrackets'
+import { getPodium } from './composables/useBracketEngine'
 import { createImageUrl, getStoredImage, removeStoredImage, setStoredImage } from './composables/useImageStorage'
 
 const {
@@ -21,10 +22,17 @@ const {
   resetCurrentBracket,
   updateCurrent,
   setPlayerCount,
+  importPlayers,
   updatePlayer,
+  removePlayer,
+  reorderPlayerSeeds,
   setPairingMode,
   setGroupCount,
+  setRepechageEnabled,
+  setRepechageSelectionMode,
   generateBracket,
+  configureRepechage,
+  resetRepechageSelection,
   setResult,
   updateScore,
   updateLottery,
@@ -45,6 +53,8 @@ const styleThemes = [
 const showList = ref(false)
 const showLottery = ref(false)
 const showHomeConfirm = ref(false)
+const showResultModal = ref(false)
+const dismissedResultKey = ref('')
 const exportTarget = ref(null)
 const bracketViewRef = ref(null)
 const generationErrors = ref([])
@@ -57,6 +67,24 @@ const backgroundImage = ref('')
 
 const canExport = computed(() => currentBracket.value?.status === 'ready')
 const displayedLogo = computed(() => customLogo.value || battleTreeLogo)
+const podium = computed(() => (currentBracket.value ? getPodium(currentBracket.value) : null))
+const resultRows = computed(() => {
+  const bracket = currentBracket.value
+  const result = podium.value
+  if (!bracket || !result) return []
+  const playerMap = Object.fromEntries((bracket.players ?? []).map((player) => [player.id, player]))
+  return [
+    { rank: 1, label: '第一名', className: 'gold', player: playerMap[result.championId] },
+    { rank: 2, label: '第二名', className: 'silver', player: playerMap[result.runnerUpId] },
+    { rank: 3, label: '第三名', className: 'bronze', player: playerMap[result.thirdPlaceId] },
+    { rank: 4, label: '第四名', className: 'medal', player: playerMap[result.fourthPlaceId] },
+  ]
+})
+const resultCompletionKey = computed(() => {
+  const rows = resultRows.value
+  if (currentBracket.value?.status !== 'ready' || rows.length !== 4 || rows.some((row) => !row.player)) return ''
+  return `${currentBracket.value.id}:${rows.map((row) => row.player.id).join('|')}`
+})
 const shellStyle = computed(() => ({
   '--custom-bg-image': backgroundImage.value ? `url(${backgroundImage.value})` : 'none',
   '--custom-bg-blur-image': backgroundImage.value && backgroundFit.value === 'contain' ? `url(${backgroundImage.value})` : 'none',
@@ -78,6 +106,18 @@ function updateName(value) {
 function handleGenerate() {
   const result = generateBracket()
   generationErrors.value = result.errors
+  if (result.ok) {
+    showResultModal.value = false
+    dismissedResultKey.value = ''
+  }
+}
+
+function handleAddBracket() {
+  showResultModal.value = false
+  dismissedResultKey.value = resultCompletionKey.value
+  addBracket()
+  localStorage.setItem(VIEW_STORAGE, 'app')
+  showHome.value = false
 }
 
 function handleDelete(id = currentId.value) {
@@ -116,10 +156,28 @@ function requestHome() {
 
 function returnHome({ preserve }) {
   if (!preserve) resetCurrentBracket()
+  showResultModal.value = false
   showHomeConfirm.value = false
   localStorage.setItem(VIEW_STORAGE, 'home')
   showHome.value = true
   homeLeaving.value = false
+}
+
+async function downloadCompletedBracket() {
+  await exportApi.downloadJpeg()
+}
+
+function goHomeFromResult() {
+  showResultModal.value = false
+  dismissedResultKey.value = resultCompletionKey.value
+  localStorage.setItem(VIEW_STORAGE, 'home')
+  showHome.value = true
+  homeLeaving.value = false
+}
+
+function closeResultModal() {
+  dismissedResultKey.value = resultCompletionKey.value
+  showResultModal.value = false
 }
 
 function setTheme(theme) {
@@ -198,6 +256,15 @@ onMounted(async () => {
   }
 })
 
+watch(
+  resultCompletionKey,
+  (key) => {
+    if (!key || key === dismissedResultKey.value) return
+    showResultModal.value = true
+  },
+  { immediate: true },
+)
+
 onBeforeUnmount(() => {
   if (customLogo.value) URL.revokeObjectURL(customLogo.value)
   if (backgroundImage.value) URL.revokeObjectURL(backgroundImage.value)
@@ -247,7 +314,7 @@ onBeforeUnmount(() => {
       :background-fit="backgroundFit"
       :has-custom-logo="Boolean(customLogo)"
       :has-background-image="Boolean(backgroundImage)"
-      @add="addBracket"
+      @add="handleAddBracket"
       @list="showList = true"
       @delete="handleDelete()"
       @lottery="showLottery = true"
@@ -267,9 +334,14 @@ onBeforeUnmount(() => {
         :bracket="currentBracket"
         @update-name="updateName"
         @set-player-count="setPlayerCount"
+        @import-players="importPlayers"
         @update-player="updatePlayer"
+        @remove-player="removePlayer"
+        @reorder-player-seeds="reorderPlayerSeeds"
         @set-pairing-mode="setPairingMode"
         @set-group-count="setGroupCount"
+        @set-repechage-enabled="setRepechageEnabled"
+        @set-repechage-selection-mode="setRepechageSelectionMode"
         @generate="handleGenerate"
       />
       <ul v-if="generationErrors.length" class="error-list">
@@ -294,6 +366,8 @@ onBeforeUnmount(() => {
         @set-result="setResult"
         @update-score="updateScore"
         @reshuffle="handleReshuffle"
+        @configure-repechage="configureRepechage"
+        @reset-repechage="resetRepechageSelection"
       />
     </section>
 
@@ -330,6 +404,43 @@ onBeforeUnmount(() => {
             不保留，重置
           </button>
           <button type="button" class="ghost" @click="showHomeConfirm = false">取消</button>
+        </div>
+      </section>
+    </div>
+
+    <div v-if="showResultModal" class="modal-backdrop result-modal-backdrop">
+      <section class="modal-panel compact result-modal" role="dialog" aria-modal="true" aria-labelledby="result-title">
+        <header class="modal-header">
+          <div>
+            <span class="result-kicker">BattleTree Result</span>
+            <h2 id="result-title">最終名次</h2>
+          </div>
+          <button type="button" class="icon-button" aria-label="關閉" @click="closeResultModal">
+            ×
+          </button>
+        </header>
+
+        <ol class="result-ranking-list">
+          <li v-for="row in resultRows" :key="row.rank" :class="row.className">
+            <span class="result-rank">{{ row.rank }}</span>
+            <div>
+              <span>{{ row.label }}</span>
+              <strong>{{ row.player?.name }}</strong>
+            </div>
+            <small>#{{ row.player?.seed }}</small>
+          </li>
+        </ol>
+
+        <div class="result-actions">
+          <button type="button" class="primary-action" @click="downloadCompletedBracket">
+            下載完整對戰表
+          </button>
+          <button type="button" class="secondary-action" @click="handleAddBracket">
+            重新開啟新的對戰
+          </button>
+          <button type="button" class="secondary-action" @click="goHomeFromResult">
+            回到首頁
+          </button>
         </div>
       </section>
     </div>
