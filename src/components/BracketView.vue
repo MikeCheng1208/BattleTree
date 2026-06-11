@@ -57,9 +57,15 @@ const thirdPlaceMatch = computed(() => podium.value.thirdPlaceMatch)
 const firstRoundState = computed(() => getFirstRoundState(props.bracket))
 const repechageTargets = computed(() => props.bracket.repechage?.targets ?? [])
 const repechageMatches = computed(() => getRepechageMatches(props.bracket))
-const repechageRequiredPlayerCount = computed(() => repechageTargets.value.length * 2)
+const repechageRequiredPlayerCount = computed(() => repechageTargets.value.length)
 const repechageSelectionMode = computed(() => props.bracket.repechage?.selectionMode ?? 'random')
-const repechageStarted = computed(() => repechageMatches.value.some((match) => Boolean(match.result)))
+const repechageStarted = computed(
+  () =>
+    repechageMatches.value.some((match) => Boolean(match.result)) ||
+    repechageTargets.value.some((target) =>
+      Boolean(props.bracket.results?.[`r${target.targetRoundIndex}-m${target.targetMatchIndex}`]),
+    ),
+)
 const repechageReady = computed(() => repechageMatches.value.length === repechageTargets.value.length)
 const repechagePromptKey = computed(() => {
   if (!props.bracket.repechage?.enabled || !repechageTargets.value.length) return ''
@@ -73,7 +79,7 @@ const repechageStatusText = computed(() => {
     return `第一輪 ${firstRoundState.value.completed} / ${firstRoundState.value.total}`
   }
   if (!repechageReady.value) return '設定敗部復活'
-  if (!repechageStarted.value) return '敗部復活待開賽'
+  if (!repechageStarted.value) return '敗部復活已安插'
   return '敗部復活進行中'
 })
 const repechageCandidates = computed(() =>
@@ -168,7 +174,8 @@ function getRepechageMatchForMatch(match) {
   const target = repechageTargets.value.find(
     (item) => item.targetRoundIndex === match.roundIndex && item.targetMatchIndex === match.matchIndex,
   )
-  return target ? repechageMatchByTarget.value[target.id] : null
+  const repechageMatch = target ? repechageMatchByTarget.value[target.id] : null
+  return repechageMatch?.isEntry ? null : repechageMatch
 }
 
 function toggleManualRepechagePlayer(playerId) {
@@ -647,11 +654,11 @@ defineExpose({
 
           <div class="repechage-prompt-body">
             <p>
-              目前賽程偵測到同一支線即將連續輪空，建議建立敗部復活賽，讓第一輪敗者有機會補進該位置。
+              目前賽程偵測到同一支線原本會連續輪空，建議依照設定名額，把第一輪敗者安插到第一輪後面的空位。
             </p>
             <div class="repechage-prompt-summary">
               <span>需要 {{ repechageRequiredPlayerCount }} 位第一輪敗者</span>
-              <strong>{{ repechageTargets.length }} 場復活賽</strong>
+              <strong>{{ repechageTargets.length }} 個安插位置</strong>
             </div>
           </div>
 
@@ -683,11 +690,11 @@ defineExpose({
             <div class="repechage-status-card">
               <span>需求</span>
               <strong v-if="repechageTargets.length">
-                {{ repechageRequiredPlayerCount }} 人 / {{ repechageTargets.length }} 場
+                {{ repechageRequiredPlayerCount }} 人 / {{ repechageTargets.length }} 個位置
               </strong>
               <strong v-else>無需啟動</strong>
               <p v-if="repechageTargets.length">
-                第一輪完成後，從敗者池產生敗部復活賽，勝者會補進原本連續輪空的場次。
+                第一輪完成後，從敗者池挑選復活者，直接安插到第一輪後面的空位。
               </p>
               <p v-else>目前賽程沒有連續輪空兩次的支線。</p>
             </div>
@@ -724,13 +731,13 @@ defineExpose({
 
               <div v-if="repechageMatches.length" class="repechage-pairings">
                 <div class="repechage-list-header">
-                  <strong>復活賽配對</strong>
-                  <span>{{ repechageStarted ? '已開賽' : '尚未開賽' }}</span>
+                  <strong>安插名單</strong>
+                  <span>已建立</span>
                 </div>
                 <div v-for="match in repechageMatches" :key="match.id" class="repechage-pairing-row">
                   <span>{{ playerMap[match.playerA]?.name }}</span>
-                  <strong>vs</strong>
-                  <span>{{ playerMap[match.playerB]?.name }}</span>
+                  <strong>→</strong>
+                  <span>第一輪後空位</span>
                 </div>
               </div>
 
@@ -745,7 +752,7 @@ defineExpose({
                   "
                   @click="configureRepechage"
                 >
-                  {{ repechageSelectionMode === 'manual' ? '確認指定並配對' : '隨機抽選復活名單' }}
+                  {{ repechageSelectionMode === 'manual' ? '確認指定並安插' : '隨機安插復活名單' }}
                 </button>
                 <button
                   type="button"

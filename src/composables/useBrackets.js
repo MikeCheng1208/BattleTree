@@ -39,6 +39,7 @@ function createRepechageState() {
   return {
     enabled: false,
     selectionMode: 'random',
+    entryCount: 2,
     targets: [],
     selectedPlayerIds: [],
     matches: [],
@@ -87,6 +88,7 @@ function normalizeBracket(bracket) {
     repechage: {
       ...createRepechageState(),
       ...(bracket?.repechage ?? {}),
+      entryCount: Math.max(1, Number(bracket?.repechage?.entryCount) || 2),
       targets: Array.isArray(bracket?.repechage?.targets) ? bracket.repechage.targets : [],
       selectedPlayerIds: Array.isArray(bracket?.repechage?.selectedPlayerIds)
         ? bracket.repechage.selectedPlayerIds
@@ -221,6 +223,37 @@ export function useBrackets() {
           ...createRepechageState(),
           enabled: bracket.repechage?.enabled ?? false,
           selectionMode: bracket.repechage?.selectionMode ?? 'random',
+          entryCount: bracket.repechage?.entryCount ?? 2,
+        },
+        lottery: createLotteryState(),
+      }
+    })
+  }
+
+  function addPlayer() {
+    updateCurrent((bracket) => {
+      const players = [
+        ...(bracket.players ?? []),
+        {
+          id: createId('player'),
+          name: `Player${(bracket.players?.length ?? 0) + 1}`,
+          seed: Math.max(0, ...(bracket.players ?? []).map((player) => Number(player.seed) || 0)) + 1,
+          registrationConfirmed: false,
+        },
+      ]
+
+      return {
+        ...bracket,
+        status: 'setup',
+        players,
+        groupCount: normalizeGroupCount(bracket.groupCount, players.length),
+        slots: [],
+        results: {},
+        repechage: {
+          ...createRepechageState(),
+          enabled: bracket.repechage?.enabled ?? false,
+          selectionMode: bracket.repechage?.selectionMode ?? 'random',
+          entryCount: bracket.repechage?.entryCount ?? 2,
         },
         lottery: createLotteryState(),
       }
@@ -250,6 +283,7 @@ export function useBrackets() {
           ...createRepechageState(),
           enabled: bracket.repechage?.enabled ?? false,
           selectionMode: bracket.repechage?.selectionMode ?? 'random',
+          entryCount: bracket.repechage?.entryCount ?? 2,
         },
         lottery: createLotteryState(),
       }
@@ -269,6 +303,7 @@ export function useBrackets() {
               ...createRepechageState(),
               enabled: bracket.repechage?.enabled ?? false,
               selectionMode: bracket.repechage?.selectionMode ?? 'random',
+              entryCount: bracket.repechage?.entryCount ?? 2,
             }
           : bracket.repechage,
     }))
@@ -289,6 +324,7 @@ export function useBrackets() {
           ...createRepechageState(),
           enabled: bracket.repechage?.enabled ?? false,
           selectionMode: bracket.repechage?.selectionMode ?? 'random',
+          entryCount: bracket.repechage?.entryCount ?? 2,
         },
         lottery: createLotteryState(),
       }
@@ -309,9 +345,34 @@ export function useBrackets() {
         ...createRepechageState(),
         enabled: bracket.repechage?.enabled ?? false,
         selectionMode: bracket.repechage?.selectionMode ?? 'random',
+        entryCount: bracket.repechage?.entryCount ?? 2,
       },
       lottery: createLotteryState(),
     }))
+  }
+
+  function shufflePlayerSeeds() {
+    updateCurrent((bracket) => {
+      const players = shufflePlayers(bracket.players ?? []).map((player, index) => ({
+        ...player,
+        seed: index + 1,
+      }))
+
+      return {
+        ...bracket,
+        status: 'setup',
+        players,
+        slots: [],
+        results: {},
+        repechage: {
+          ...createRepechageState(),
+          enabled: bracket.repechage?.enabled ?? false,
+          selectionMode: bracket.repechage?.selectionMode ?? 'random',
+          entryCount: bracket.repechage?.entryCount ?? 2,
+        },
+        lottery: createLotteryState(),
+      }
+    })
   }
 
   function setPairingMode(pairingMode) {
@@ -327,6 +388,7 @@ export function useBrackets() {
               ...createRepechageState(),
               enabled: bracket.repechage?.enabled ?? false,
               selectionMode: bracket.repechage?.selectionMode ?? 'random',
+              entryCount: bracket.repechage?.entryCount ?? 2,
             }
           : bracket.repechage,
     }))
@@ -345,6 +407,7 @@ export function useBrackets() {
               ...createRepechageState(),
               enabled: bracket.repechage?.enabled ?? false,
               selectionMode: bracket.repechage?.selectionMode ?? 'random',
+              entryCount: bracket.repechage?.entryCount ?? 2,
             }
           : bracket.repechage,
     }))
@@ -360,7 +423,23 @@ export function useBrackets() {
         ...createRepechageState(),
         enabled: Boolean(enabled),
         selectionMode: bracket.repechage?.selectionMode ?? 'random',
+        entryCount: bracket.repechage?.entryCount ?? 2,
       },
+    }))
+  }
+
+  function setRepechageEntryCount(entryCount) {
+    updateCurrent((bracket) => ({
+      ...bracket,
+      repechage: {
+        ...bracket.repechage,
+        entryCount: Math.max(1, Number(entryCount) || 1),
+        selectedPlayerIds: [],
+        matches: [],
+      },
+      results: Object.fromEntries(
+        Object.entries(bracket.results ?? {}).filter(([id]) => !id.startsWith(REPECHAGE_MATCH_PREFIX)),
+      ),
     }))
   }
 
@@ -389,6 +468,7 @@ export function useBrackets() {
     const groupCount = normalizeGroupCount(bracket.groupCount, bracket.players.length)
     const { slotsData } = createGroupedSlots(bracket.players, pairingMode, groupCount)
     const requirements = getRepechageRequirements(bracket.players, pairingMode, groupCount)
+    const entryCount = Math.max(1, Number(bracket.repechage?.entryCount) || 2)
     persist({
       ...bracket,
       pairingMode,
@@ -401,7 +481,8 @@ export function useBrackets() {
         ...createRepechageState(),
         enabled: bracket.repechage?.enabled ?? false,
         selectionMode: bracket.repechage?.selectionMode ?? 'random',
-        targets: bracket.repechage?.enabled ? requirements.targets : [],
+        entryCount,
+        targets: bracket.repechage?.enabled ? requirements.targets.slice(0, entryCount) : [],
       },
       lottery: createLotteryState(),
     })
@@ -462,13 +543,83 @@ export function useBrackets() {
     })
   }
 
+  function getFirstRoundOpponentMap(bracket) {
+    const firstRound = deriveRounds(bracket)[0] ?? []
+    const opponentMap = new Map()
+    firstRound.forEach((match) => {
+      if (!match.playerA || !match.playerB) return
+      opponentMap.set(match.playerA, match.playerB)
+      opponentMap.set(match.playerB, match.playerA)
+    })
+    return opponentMap
+  }
+
+  function assignRepechageEntries(bracket, candidateIds) {
+    const targets = bracket.repechage?.targets ?? []
+    const baseBracket = {
+      ...bracket,
+      repechage: {
+        ...bracket.repechage,
+        matches: [],
+      },
+    }
+    const rounds = deriveRounds(baseBracket)
+    const firstRoundOpponentMap = getFirstRoundOpponentMap(baseBracket)
+    const targetOpponentMap = new Map()
+
+    targets.forEach((target) => {
+      const match = rounds[target.targetRoundIndex]?.[target.targetMatchIndex]
+      const opponentId = target.targetSide === 0 ? match?.playerB : match?.playerA
+      if (opponentId) targetOpponentMap.set(target.id, opponentId)
+    })
+
+    const assignedByTarget = new Map()
+    const assignedByMatch = new Map()
+
+    function canAssign(playerId, target) {
+      const previousOpponent = firstRoundOpponentMap.get(playerId)
+      const targetOpponent = targetOpponentMap.get(target.id)
+      if (previousOpponent && targetOpponent && previousOpponent === targetOpponent) return false
+
+      const matchId = `r${target.targetRoundIndex}-m${target.targetMatchIndex}`
+      const sameMatchPlayer = assignedByMatch.get(matchId)
+      if (sameMatchPlayer && firstRoundOpponentMap.get(playerId) === sameMatchPlayer) return false
+
+      return true
+    }
+
+    function place(targetIndex, remainingIds) {
+      if (targetIndex >= targets.length) return true
+      const target = targets[targetIndex]
+      const shuffledIds = shufflePlayers(remainingIds)
+      for (const playerId of shuffledIds) {
+        if (!canAssign(playerId, target)) continue
+        const matchId = `r${target.targetRoundIndex}-m${target.targetMatchIndex}`
+        assignedByTarget.set(target.id, playerId)
+        assignedByMatch.set(matchId, playerId)
+        if (place(targetIndex + 1, remainingIds.filter((id) => id !== playerId))) return true
+        assignedByTarget.delete(target.id)
+        assignedByMatch.delete(matchId)
+      }
+      return false
+    }
+
+    const ok = place(0, [...new Set(candidateIds)])
+    if (!ok) return null
+    return targets.map((target, index) => ({
+      id: `${REPECHAGE_MATCH_PREFIX}${index}`,
+      entryPlayerId: assignedByTarget.get(target.id),
+      targetId: target.id,
+    }))
+  }
+
   function configureRepechage(selectedPlayerIds = null) {
     const bracket = currentBracket.value
     if (!bracket?.repechage?.enabled) return { ok: false, errors: ['敗部復活模式尚未啟用'] }
     const firstRound = getFirstRoundState(bracket)
     if (!firstRound.complete) return { ok: false, errors: ['第一輪尚未全部完成'] }
 
-    const requiredCount = (bracket.repechage.targets?.length ?? 0) * 2
+    const requiredCount = bracket.repechage.targets?.length ?? 0
     if (!requiredCount) return { ok: false, errors: ['目前賽程不需要敗部復活'] }
     if (firstRound.loserIds.length < requiredCount) {
       return { ok: false, errors: ['第一輪敗者人數不足，無法建立敗部復活賽'] }
@@ -477,23 +628,21 @@ export function useBrackets() {
     const candidateIds =
       bracket.repechage.selectionMode === 'manual'
         ? [...new Set(selectedPlayerIds ?? [])]
-        : shufflePlayers(firstRound.loserIds).slice(0, requiredCount)
-    if (candidateIds.length !== requiredCount || candidateIds.some((id) => !firstRound.loserIds.includes(id))) {
+        : shufflePlayers(firstRound.loserIds)
+    const selectedCount = bracket.repechage.selectionMode === 'manual' ? candidateIds.length : requiredCount
+    if (selectedCount !== requiredCount || candidateIds.some((id) => !firstRound.loserIds.includes(id))) {
       return { ok: false, errors: [`請選擇 ${requiredCount} 位第一輪敗者`] }
     }
 
-    const pairedIds = shufflePlayers(candidateIds)
-    const matches = bracket.repechage.targets.map((target, index) => ({
-      id: `${REPECHAGE_MATCH_PREFIX}${index}`,
-      playerAId: pairedIds[index * 2],
-      playerBId: pairedIds[index * 2 + 1],
-      targetId: target.id,
-    }))
+    const matches = assignRepechageEntries(bracket, candidateIds)
+    if (!matches) {
+      return { ok: false, errors: ['目前復活名單無法避開第一輪重複對戰，請重新抽選或調整名單'] }
+    }
     updateCurrent((current) => ({
       ...current,
       repechage: {
         ...current.repechage,
-        selectedPlayerIds: candidateIds,
+        selectedPlayerIds: matches.map((match) => match.entryPlayerId),
         matches,
       },
       results: Object.fromEntries(
@@ -505,9 +654,13 @@ export function useBrackets() {
 
   function resetRepechageSelection() {
     updateCurrent((bracket) => {
-      const hasStarted = (bracket.repechage?.matches ?? []).some(
-        (match) => bracket.results?.[match.id]?.winnerSlot !== undefined,
-      )
+      const hasStarted =
+        (bracket.repechage?.matches ?? []).some(
+          (match) => bracket.results?.[match.id]?.winnerSlot !== undefined,
+        ) ||
+        (bracket.repechage?.targets ?? []).some(
+          (target) => bracket.results?.[`r${target.targetRoundIndex}-m${target.targetMatchIndex}`]?.winnerSlot !== undefined,
+        )
       if (hasStarted) return bracket
       return {
         ...bracket,
@@ -562,14 +715,17 @@ export function useBrackets() {
     resetCurrentBracket,
     updateCurrent,
     setPlayerCount,
+    addPlayer,
     importPlayers,
     updatePlayer,
     removePlayer,
     reorderPlayerSeeds,
+    shufflePlayerSeeds,
     setPairingMode,
     setGroupCount,
     setRepechageEnabled,
     setRepechageSelectionMode,
+    setRepechageEntryCount,
     generateBracket,
     configureRepechage,
     resetRepechageSelection,

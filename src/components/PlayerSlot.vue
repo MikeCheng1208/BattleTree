@@ -8,13 +8,14 @@ defineProps({
   isWinner: Boolean,
   isLoser: Boolean,
   canWin: Boolean,
+  isRepechageEntry: Boolean,
 })
 
 defineEmits(['win'])
 </script>
 
 <template>
-  <div class="player-slot" :class="{ winner: isWinner, loser: isLoser, empty: !player }">
+  <div class="player-slot" :class="{ winner: isWinner, loser: isLoser, empty: !player, repechage: isRepechageEntry }">
     <div v-if="player" class="player-meta">
       <span class="seed">#{{ player.seed }}</span>
       <strong>{{ player.name }}</strong>

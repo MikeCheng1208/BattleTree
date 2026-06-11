@@ -36,6 +36,7 @@ const hasManualResult = computed(() => Boolean(props.match.result))
       :is-winner="winnerSlot === 0"
       :is-loser="winnerSlot === 1 && Boolean(playerA)"
       :can-win="match.isPlayable"
+      :is-repechage-entry="match.isRepechagePlayerA"
       @win="emit('set-result', match.id, 0)"
     />
     <PlayerSlot
@@ -44,6 +45,7 @@ const hasManualResult = computed(() => Boolean(props.match.result))
       :is-winner="winnerSlot === 1"
       :is-loser="winnerSlot === 0 && Boolean(playerB)"
       :can-win="match.isPlayable"
+      :is-repechage-entry="match.isRepechagePlayerB"
       @win="emit('set-result', match.id, 1)"
     />
     <ScorePopover

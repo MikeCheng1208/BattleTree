@@ -16,14 +16,17 @@ const props = defineProps({
 const emit = defineEmits([
   'update-name',
   'set-player-count',
+  'add-player',
   'import-players',
   'update-player',
   'remove-player',
   'reorder-player-seeds',
+  'shuffle-player-seeds',
   'set-pairing-mode',
   'set-group-count',
   'set-repechage-enabled',
   'set-repechage-selection-mode',
+  'set-repechage-entry-count',
   'generate',
 ])
 const GROUP_OPTIONS = [1, 2, 4, 8]
@@ -57,6 +60,12 @@ const availableGroupOptions = computed(() =>
 )
 const repechageRequirements = computed(() =>
   getRepechageRequirements(props.bracket.players, props.bracket.pairingMode, props.bracket.groupCount),
+)
+const repechageEntryCount = computed(() =>
+  Math.min(
+    Math.max(1, Number(props.bracket.repechage?.entryCount) || 2),
+    Math.max(1, repechageRequirements.value.playerCount || 1),
+  ),
 )
 
 watch(
@@ -185,6 +194,13 @@ async function handleCsvImport(event) {
         >
           隨機抽籤
         </button>
+        <button
+          type="button"
+          class="shuffle-seeds-button"
+          @click="emit('shuffle-player-seeds')"
+        >
+          隨機重排編號
+        </button>
       </div>
     </div>
 
@@ -228,6 +244,12 @@ async function handleCsvImport(event) {
       <li v-for="error in submitErrors" :key="error">{{ error }}</li>
     </ul>
 
+    <div class="setup-bottom-actions">
+      <button type="button" class="secondary-action add-player-button" @click="emit('add-player')">
+        +1 新增參賽者
+      </button>
+    </div>
+
     <button type="button" class="primary-action" @click="generate">產生對戰表</button>
 
     <section class="repechage-setup-card">
@@ -235,7 +257,7 @@ async function handleCsvImport(event) {
         <span>敗部復活模式</span>
         <strong>{{ bracket.repechage?.enabled ? '已啟用' : '未啟用' }}</strong>
         <p>
-          系統只會在同一支線即將連續輪空兩次時啟動補位，第一輪完成後從敗者中產生復活賽。
+          系統只會在同一支線原本會連續輪空兩次時啟動，第一輪完成後依設定名額安插第一輪敗者。
         </p>
       </div>
       <div class="repechage-setup-controls">
@@ -269,13 +291,24 @@ async function handleCsvImport(event) {
           </button>
         </div>
       </div>
+      <label class="repechage-entry-field">
+        <span>復活名額</span>
+        <input
+          :value="repechageEntryCount"
+          type="number"
+          min="1"
+          :max="Math.max(1, repechageRequirements.playerCount)"
+          :disabled="!bracket.repechage?.enabled || !repechageRequirements.playerCount"
+          @change="emit('set-repechage-entry-count', $event.target.value)"
+        />
+      </label>
       <div class="repechage-requirement">
         <template v-if="repechageRequirements.matchCount">
-          預估需要
+          最多可安插
           <strong>{{ repechageRequirements.playerCount }}</strong>
-          位第一輪敗者，進行
-          <strong>{{ repechageRequirements.matchCount }}</strong>
-          場敗部復活賽。
+          位第一輪敗者；目前設定
+          <strong>{{ repechageEntryCount }}</strong>
+          位。
         </template>
         <template v-else>
           目前賽程不會連續輪空，無需建立敗部復活賽。
@@ -293,8 +326,8 @@ async function handleCsvImport(event) {
       <div v-if="showRepechageExplainer" class="repechage-explainer">
         <strong>出現條件</strong>
         <p>
-          敗部復活只會在某位選手或某條支線已經輪空一次，下一輪又即將再次輪空時出現。
-          這時系統會等第一輪全部完成後，從第一輪敗者中建立復活賽，勝者補進原本第二次輪空的位置。
+          敗部復活只會在某位選手或某條支線原本會連續輪空兩次時出現。
+          這時系統會等第一輪全部完成後，依照復活名額從第一輪敗者中挑選選手，安插到第一輪後面的空位。
         </p>
         <strong>不會出現的情況</strong>
         <p>

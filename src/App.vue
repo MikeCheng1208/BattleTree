@@ -22,14 +22,17 @@ const {
   resetCurrentBracket,
   updateCurrent,
   setPlayerCount,
+  addPlayer,
   importPlayers,
   updatePlayer,
   removePlayer,
   reorderPlayerSeeds,
+  shufflePlayerSeeds,
   setPairingMode,
   setGroupCount,
   setRepechageEnabled,
   setRepechageSelectionMode,
+  setRepechageEntryCount,
   generateBracket,
   configureRepechage,
   resetRepechageSelection,
@@ -334,14 +337,17 @@ onBeforeUnmount(() => {
         :bracket="currentBracket"
         @update-name="updateName"
         @set-player-count="setPlayerCount"
+        @add-player="addPlayer"
         @import-players="importPlayers"
         @update-player="updatePlayer"
         @remove-player="removePlayer"
         @reorder-player-seeds="reorderPlayerSeeds"
+        @shuffle-player-seeds="shufflePlayerSeeds"
         @set-pairing-mode="setPairingMode"
         @set-group-count="setGroupCount"
         @set-repechage-enabled="setRepechageEnabled"
         @set-repechage-selection-mode="setRepechageSelectionMode"
+        @set-repechage-entry-count="setRepechageEntryCount"
         @generate="handleGenerate"
       />
       <ul v-if="generationErrors.length" class="error-list">
