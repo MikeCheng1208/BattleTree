@@ -324,8 +324,9 @@ match 結構：
 
 敗部復活規則：
 
-- 設定頁可啟用敗部復活，並選擇 `random` 或 `manual`。
+- 設定頁與執行中皆可啟用敗部復活，並選擇 `random` 或 `manual`。
 - 產生對戰表時依復活名額建立安插 targets；無連續輪空時 targets 為空。
+- 執行中透過 `applyRepechageSettingsDuringMatch` 啟用/調整/停用：以 `analyzeRepechageInsertionTargets(bracket.slots, groupCount)` 就地補建 targets、不重生 slots，並以 `sanitizeResults` 連鎖清除因等待復活者而不再合法的下游成績（UI 會先預覽影響場數並確認）；復活相關場次開打後鎖定。
 - 第一輪全部完成後，從第一輪敗者建立復活池。
 - 每個 target 需要 1 位第一輪敗者安插。
 - 隨機模式由系統抽選；手動模式由主辦指定精確人數。

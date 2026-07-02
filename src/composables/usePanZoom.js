@@ -1,4 +1,5 @@
 import { computed, nextTick, ref } from 'vue'
+import { gsap } from 'gsap'
 
 const MIN_SCALE = 0.08
 const MAX_SCALE = 2
@@ -21,6 +22,13 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
   const hasManualViewChange = ref(false)
   const activePointers = new Map()
   let pinchStart = null
+  let viewTween = null
+
+  function stopViewTween() {
+    if (!viewTween) return
+    viewTween.kill()
+    viewTween = null
+  }
 
   const transformStyle = computed(() => ({
     transform: `translate(${translateX.value}px, ${translateY.value}px) scale(${scale.value})`,
@@ -48,6 +56,7 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
   function zoomBy(delta) {
     const viewport = viewportRef.value
     if (!viewport) return
+    stopViewTween()
     const rect = viewport.getBoundingClientRect()
     setScaleAroundPoint(scale.value + delta, rect.left + rect.width / 2, rect.top + rect.height / 2)
     hasManualViewChange.value = true
@@ -62,6 +71,7 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
   }
 
   function resetView() {
+    stopViewTween()
     scale.value = 1
     translateX.value = 0
     translateY.value = 0
@@ -70,6 +80,7 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
 
   async function fitToView({ force = true } = {}) {
     if (!force && hasManualViewChange.value) return
+    stopViewTween()
     await nextTick()
     const viewport = viewportRef.value
     const board = boardRef.value
@@ -87,6 +98,49 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
     translateX.value = (viewportRect.width - boardWidth * nextScale) / 2
     translateY.value = (viewportRect.height - boardHeight * nextScale) / 2
     hasManualViewChange.value = false
+  }
+
+  // rect 為 board 座標系（未縮放）的區域
+  function focusRect(rect, { padding = 70, maxScale = 1 } = {}) {
+    const viewport = viewportRef.value
+    const board = boardRef.value
+    if (!viewport || !board || !rect?.width || !rect?.height) return
+
+    const viewportRect = viewport.getBoundingClientRect()
+    if (!viewportRect.width || !viewportRect.height) return
+
+    const boardScreen = board.getBoundingClientRect()
+    const boardOffsetX = (boardScreen.left - viewportRect.left - translateX.value) / scale.value
+    const boardOffsetY = (boardScreen.top - viewportRect.top - translateY.value) / scale.value
+
+    const availWidth = Math.max(80, viewportRect.width - padding * 2)
+    const availHeight = Math.max(80, viewportRect.height - padding * 2)
+    const nextScale = clamp(Math.min(availWidth / rect.width, availHeight / rect.height, maxScale))
+
+    const centerX = boardOffsetX + rect.x + rect.width / 2
+    const centerY = boardOffsetY + rect.y + rect.height / 2
+    const nextTranslateX = viewportRect.width / 2 - centerX * nextScale
+    const nextTranslateY = viewportRect.height / 2 - centerY * nextScale
+
+    // 聚焦視角是使用者的刻意選擇，先設 flag 讓 resize 的 fitToView({ force: false }) 不會搶回視角
+    hasManualViewChange.value = true
+    stopViewTween()
+    const state = { s: scale.value, tx: translateX.value, ty: translateY.value }
+    viewTween = gsap.to(state, {
+      s: nextScale,
+      tx: nextTranslateX,
+      ty: nextTranslateY,
+      duration: 0.55,
+      ease: 'power2.inOut',
+      onUpdate: () => {
+        scale.value = state.s
+        translateX.value = state.tx
+        translateY.value = state.ty
+      },
+      onComplete: () => {
+        viewTween = null
+      },
+    })
   }
 
   function getPointerGesture() {
@@ -138,6 +192,7 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
 
   function onPointerDown(event) {
     if (event.button !== 0 || isInteractiveTarget(event.target)) return
+    stopViewTween()
     activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
     isDragging.value = true
     if (activePointers.size === 1) {
@@ -182,6 +237,7 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
 
   function onWheel(event) {
     event.preventDefault()
+    stopViewTween()
     const direction = event.deltaY > 0 ? -1 : 1
     const delta = direction * STEP
     setScaleAroundPoint(scale.value + delta, event.clientX, event.clientY)
@@ -199,6 +255,7 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
     zoomOut,
     resetView,
     fitToView,
+    focusRect,
     onPointerDown,
     onPointerMove,
     onPointerUp,

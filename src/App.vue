@@ -35,6 +35,7 @@ const {
   setRepechageEntryCount,
   generateBracket,
   configureRepechage,
+  applyRepechageSettingsDuringMatch,
   resetRepechageSelection,
   setResult,
   updateScore,
@@ -141,6 +142,11 @@ function handleReshuffle() {
   if (confirm('重新抽籤會清空目前所有比賽結果，確定繼續？')) {
     generateBracket('random')
   }
+}
+
+function handleApplyRepechageSettings(payload) {
+  const result = applyRepechageSettingsDuringMatch(payload)
+  if (!result.ok) alert(result.errors.join('\n'))
 }
 
 function startBattle() {
@@ -373,6 +379,7 @@ onBeforeUnmount(() => {
         @update-score="updateScore"
         @reshuffle="handleReshuffle"
         @configure-repechage="configureRepechage"
+        @apply-repechage-settings="handleApplyRepechageSettings"
         @reset-repechage="resetRepechageSelection"
       />
     </section>

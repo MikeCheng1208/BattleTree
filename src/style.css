@@ -1900,6 +1900,25 @@ input {
   white-space: nowrap;
 }
 
+.zoom-controls button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+@keyframes focus-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 16px transparent;
+  }
+}
+
+.match-shell.focus-pulse > .match-card,
+.third-place-section.focus-pulse .match-card {
+  animation: focus-pulse-ring 0.85s ease-out 2;
+}
+
 .zoom-controls span {
   flex: 0 0 auto;
   min-width: 54px;
@@ -2516,6 +2535,42 @@ input {
   color: #d97706;
   font-size: 12px;
   font-weight: 900;
+}
+
+.repechage-live-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.repechage-live-settings .repechage-entry-field {
+  grid-column: auto;
+}
+
+.repechage-impact-warning {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(217, 119, 6, 0.26);
+  border-radius: var(--radius);
+  background: rgba(245, 158, 11, 0.1);
+  color: #b45309;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.55;
+}
+
+.repechage-live-adjust .stage-actions {
+  margin-top: 2px;
+}
+
+.repechage-live-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.55;
 }
 
 [data-theme='inverse'] .view-controls,

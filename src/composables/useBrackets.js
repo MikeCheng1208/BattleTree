@@ -1,6 +1,7 @@
 import { computed } from 'vue'
 import { useStorage } from '@vueuse/core'
 import {
+  analyzeRepechageInsertionTargets,
   buildInitialPlayers,
   createGroupedSlots,
   createId,
@@ -44,6 +45,17 @@ function createRepechageState() {
     selectedPlayerIds: [],
     matches: [],
   }
+}
+
+function hasRepechageStarted(bracket) {
+  return (
+    (bracket.repechage?.matches ?? []).some(
+      (match) => bracket.results?.[match.id]?.winnerSlot !== undefined,
+    ) ||
+    (bracket.repechage?.targets ?? []).some(
+      (target) => bracket.results?.[`r${target.targetRoundIndex}-m${target.targetMatchIndex}`]?.winnerSlot !== undefined,
+    )
+  )
 }
 
 function createBracket(overrides = {}) {
@@ -652,16 +664,39 @@ export function useBrackets() {
     return { ok: true, errors: [] }
   }
 
+  function applyRepechageSettingsDuringMatch({ enabled, selectionMode, entryCount } = {}) {
+    const bracket = currentBracket.value
+    if (!bracket || bracket.status !== 'ready') return { ok: false, errors: ['對戰表尚未產生'] }
+    if (hasRepechageStarted(bracket)) return { ok: false, errors: ['敗部復活相關場次已開打，無法調整設定'] }
+
+    const available = analyzeRepechageInsertionTargets(bracket.slots, bracket.groupCount)
+    const nextEnabled = Boolean(enabled)
+    if (nextEnabled && !available.length) return { ok: false, errors: ['本賽程無需敗部復活'] }
+
+    const nextEntryCount = Math.min(
+      Math.max(1, Number(entryCount) || Number(bracket.repechage?.entryCount) || 2),
+      Math.max(1, available.length),
+    )
+    const next = {
+      ...bracket,
+      repechage: {
+        ...createRepechageState(),
+        enabled: nextEnabled,
+        selectionMode: selectionMode === 'manual' ? 'manual' : 'random',
+        entryCount: nextEntryCount,
+        targets: nextEnabled ? available.slice(0, nextEntryCount) : [],
+      },
+      results: Object.fromEntries(
+        Object.entries(bracket.results ?? {}).filter(([id]) => !id.startsWith(REPECHAGE_MATCH_PREFIX)),
+      ),
+    }
+    persist({ ...next, results: sanitizeResults(next) })
+    return { ok: true, errors: [] }
+  }
+
   function resetRepechageSelection() {
     updateCurrent((bracket) => {
-      const hasStarted =
-        (bracket.repechage?.matches ?? []).some(
-          (match) => bracket.results?.[match.id]?.winnerSlot !== undefined,
-        ) ||
-        (bracket.repechage?.targets ?? []).some(
-          (target) => bracket.results?.[`r${target.targetRoundIndex}-m${target.targetMatchIndex}`]?.winnerSlot !== undefined,
-        )
-      if (hasStarted) return bracket
+      if (hasRepechageStarted(bracket)) return bracket
       return {
         ...bracket,
         repechage: {
@@ -728,6 +763,7 @@ export function useBrackets() {
     setRepechageEntryCount,
     generateBracket,
     configureRepechage,
+    applyRepechageSettingsDuringMatch,
     resetRepechageSelection,
     setResult,
     updateScore,

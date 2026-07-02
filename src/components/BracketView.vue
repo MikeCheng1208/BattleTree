@@ -3,12 +3,16 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useResizeObserver } from '@vueuse/core'
 import MatchCard from './MatchCard.vue'
 import {
+  analyzeRepechageInsertionTargets,
   deriveRounds,
   getBracketGroups,
   getFirstRoundState,
   getPlayerMap,
   getPodium,
   getRepechageMatches,
+  REPECHAGE_MATCH_PREFIX,
+  sanitizeResults,
+  THIRD_PLACE_MATCH_ID,
 } from '../composables/useBracketEngine'
 import { usePanZoom } from '../composables/usePanZoom'
 
@@ -25,7 +29,14 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['set-result', 'update-score', 'reshuffle', 'configure-repechage', 'reset-repechage'])
+const emit = defineEmits([
+  'set-result',
+  'update-score',
+  'reshuffle',
+  'configure-repechage',
+  'apply-repechage-settings',
+  'reset-repechage',
+])
 
 const viewportRef = ref(null)
 const contentRef = ref(null)
@@ -39,6 +50,8 @@ const showRepechageManager = ref(false)
 const showRepechagePrompt = ref(false)
 const dismissedRepechagePromptKey = ref('')
 const manualRepechageSelection = ref([])
+const draftSelectionMode = ref('random')
+const draftEntryCount = ref(2)
 
 const rounds = computed(() => deriveRounds(props.bracket))
 const displayRounds = computed(() => (viewMode.value === 'ladder' ? [...rounds.value].reverse() : rounds.value))
@@ -55,6 +68,17 @@ const thirdPlace = computed(() => playerMap.value[podium.value.thirdPlaceId] ?? 
 const fourthPlace = computed(() => playerMap.value[podium.value.fourthPlaceId] ?? null)
 const thirdPlaceMatch = computed(() => podium.value.thirdPlaceMatch)
 const firstRoundState = computed(() => getFirstRoundState(props.bracket))
+// 敗部復活場次目前皆為直接安插（isEntry、不可對打），復活者已含在主樹 target 場內；
+// 若未來出現可對打的復活賽，需另外納入 upcoming。
+const upcomingMatches = computed(() => {
+  const list = rounds.value.flat().filter((match) => match.isPlayable && !match.winnerId)
+  const third = thirdPlaceMatch.value
+  if (third && !third.winnerId) list.push(third)
+  return list
+})
+const canFocusNext = computed(() => upcomingMatches.value.length > 0)
+const focusedMatchIds = ref([])
+let focusPulseTimer = null
 const repechageTargets = computed(() => props.bracket.repechage?.targets ?? [])
 const repechageMatches = computed(() => getRepechageMatches(props.bracket))
 const repechageRequiredPlayerCount = computed(() => repechageTargets.value.length)
@@ -88,6 +112,34 @@ const repechageCandidates = computed(() =>
 const repechageMatchByTarget = computed(() =>
   Object.fromEntries(repechageMatches.value.map((match) => [match.targetId, match])),
 )
+const availableInsertionTargets = computed(() =>
+  analyzeRepechageInsertionTargets(props.bracket.slots, props.bracket.groupCount),
+)
+const maxRepechageEntryCount = computed(() => availableInsertionTargets.value.length)
+const repechageSettingsLocked = computed(
+  () => repechageStarted.value || repechageMatches.value.length > 0,
+)
+const clampedDraftEntryCount = computed(() =>
+  Math.min(Math.max(1, Number(draftEntryCount.value) || 1), Math.max(1, maxRepechageEntryCount.value)),
+)
+const draftAffectedResultCount = computed(() => {
+  if (!maxRepechageEntryCount.value) return 0
+  const candidate = {
+    ...props.bracket,
+    repechage: {
+      ...props.bracket.repechage,
+      enabled: true,
+      entryCount: clampedDraftEntryCount.value,
+      targets: availableInsertionTargets.value.slice(0, clampedDraftEntryCount.value),
+      selectedPlayerIds: [],
+      matches: [],
+    },
+  }
+  const sanitized = sanitizeResults(candidate)
+  return Object.keys(props.bracket.results ?? {}).filter(
+    (id) => !id.startsWith(REPECHAGE_MATCH_PREFIX) && !sanitized[id],
+  ).length
+})
 const groupRoundCount = computed(() => {
   const firstGroup = bracketGroups.value[0]
   return firstGroup ? Math.log2(firstGroup.slotCount) : 0
@@ -133,6 +185,7 @@ const {
   zoomOut,
   resetView,
   fitToView,
+  focusRect,
   onPointerDown,
   onPointerMove,
   onPointerUp,
@@ -197,6 +250,25 @@ function configureRepechage() {
   showRepechageManager.value = false
 }
 
+function onDraftEntryCountChange(event) {
+  draftEntryCount.value = event.target.value
+  event.target.value = String(clampedDraftEntryCount.value)
+}
+
+function applyRepechageSettings(enabled) {
+  if (enabled && draftAffectedResultCount.value > 0) {
+    const confirmed = confirm(
+      `啟用敗部復活將清除 ${draftAffectedResultCount.value} 場已完成場次的成績，確定繼續？`,
+    )
+    if (!confirmed) return
+  }
+  emit('apply-repechage-settings', {
+    enabled,
+    selectionMode: draftSelectionMode.value,
+    entryCount: clampedDraftEntryCount.value,
+  })
+}
+
 function openRepechageManagerFromPrompt() {
   dismissedRepechagePromptKey.value = repechagePromptKey.value
   showRepechagePrompt.value = false
@@ -248,6 +320,69 @@ function getRect(id) {
     width: rect.width / scale.value,
     height: rect.height / scale.value,
   }
+}
+
+function getTabForMatch(match) {
+  if (match.id === THIRD_PLACE_MATCH_ID) return activeGroupTab.value
+  if (match.roundIndex >= groupRoundCount.value) return 'final'
+  const slotIndex = match.matchIndex * 2 ** (match.roundIndex + 1)
+  const index = bracketGroups.value.findIndex(
+    (group) => slotIndex >= group.startSlot && slotIndex < group.startSlot + group.slotCount,
+  )
+  return `group-${Math.max(0, index)}`
+}
+
+async function focusNextMatches() {
+  let targets = upcomingMatches.value.slice(0, 2)
+  if (!targets.length) return
+
+  if (viewMode.value === 'groups') {
+    const firstTab = getTabForMatch(targets[0])
+    targets = targets.filter((match) => getTabForMatch(match) === firstTab)
+    if (activeGroupTab.value !== firstTab) {
+      activeGroupTab.value = firstTab
+      await nextTick()
+      updateLines()
+    }
+  }
+
+  const rects = targets
+    .filter((match) => matchRefs.value[match.id]?.isConnected)
+    .map((match) => ({ match, rect: getRect(match.id) }))
+    .filter((item) => item.rect)
+  if (!rects.length) return
+
+  const viewportRect = viewportRef.value?.getBoundingClientRect()
+  const unionOf = (items) => {
+    const minX = Math.min(...items.map(({ rect }) => rect.x))
+    const minY = Math.min(...items.map(({ rect }) => rect.y))
+    const maxX = Math.max(...items.map(({ rect }) => rect.x + rect.width))
+    const maxY = Math.max(...items.map(({ rect }) => rect.y + rect.height))
+    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+  }
+
+  let focusItems = rects
+  let union = unionOf(focusItems)
+  // 兩場距離太遠時聚焦會縮到看不清，退回只聚焦下一場
+  if (viewportRect && focusItems.length > 1) {
+    const fitScale = Math.min(
+      (viewportRect.width - 140) / union.width,
+      (viewportRect.height - 140) / union.height,
+    )
+    if (fitScale < 0.4) {
+      focusItems = rects.slice(0, 1)
+      union = unionOf(focusItems)
+    }
+  }
+  focusRect(union, { padding: 70, maxScale: 1 })
+
+  clearTimeout(focusPulseTimer)
+  focusedMatchIds.value = []
+  await nextTick()
+  focusedMatchIds.value = focusItems.map(({ match }) => match.id)
+  focusPulseTimer = setTimeout(() => {
+    focusedMatchIds.value = []
+  }, 1800)
 }
 
 async function updateLines() {
@@ -306,6 +441,7 @@ watch(
 watch(
   repechagePromptKey,
   (key) => {
+    if (showRepechageManager.value) return
     if (!key || key === dismissedRepechagePromptKey.value) {
       showRepechagePrompt.value = false
       return
@@ -314,6 +450,11 @@ watch(
   },
   { immediate: true },
 )
+watch(showRepechageManager, (open) => {
+  if (!open) return
+  draftSelectionMode.value = repechageSelectionMode.value
+  draftEntryCount.value = props.bracket.repechage?.entryCount ?? 2
+})
 watch(
   () => props.bracket.repechage?.selectedPlayerIds,
   (ids) => {
@@ -383,6 +524,9 @@ defineExpose({
           <button type="button" class="manual-zoom-control" @click="zoomIn">放大</button>
           <button type="button" @click="resetView">重置</button>
           <button type="button" @click="fitToView">適合畫面</button>
+          <button type="button" :disabled="!canFocusNext" title="聚焦下一場比賽" @click="focusNextMatches">
+            下一場
+          </button>
         </div>
         <button
           v-if="bracket.pairingMode === 'random'"
@@ -393,12 +537,11 @@ defineExpose({
           重新抽籤
         </button>
         <button
-          v-if="bracket.repechage?.enabled"
           type="button"
           class="secondary-action repechage-manager-button"
           @click="showRepechageManager = true"
         >
-          {{ repechageStatusText }}
+          {{ bracket.repechage?.enabled ? repechageStatusText : '啟用敗部復活' }}
         </button>
       </div>
 
@@ -463,7 +606,12 @@ defineExpose({
               </ol>
             </div>
 
-            <section v-if="thirdPlaceMatch" class="third-place-section">
+            <section
+              v-if="thirdPlaceMatch"
+              :ref="(el) => setMatchRef(THIRD_PLACE_MATCH_ID, el)"
+              class="third-place-section"
+              :class="{ 'focus-pulse': focusedMatchIds.includes(THIRD_PLACE_MATCH_ID) }"
+            >
               <div class="third-place-title">
                 <span>3rd Place Match</span>
                 <strong>第三名爭奪戰</strong>
@@ -509,7 +657,7 @@ defineExpose({
                 :key="match.id"
                 :ref="(el) => setMatchRef(match.id, el)"
                 class="match-shell"
-                :class="{ 'has-repechage': getRepechageMatchForMatch(match) }"
+                :class="{ 'has-repechage': getRepechageMatchForMatch(match), 'focus-pulse': focusedMatchIds.includes(match.id) }"
                 :style="getMatchGridStyle(round.length, match.matchIndex)"
               >
                 <div v-if="getMatchGroup(match)" class="group-marker">
@@ -570,7 +718,7 @@ defineExpose({
                     :key="match.id"
                     :ref="(el) => setMatchRef(match.id, el)"
                     class="match-shell"
-                    :class="{ 'has-repechage': getRepechageMatchForMatch(match) }"
+                    :class="{ 'has-repechage': getRepechageMatchForMatch(match), 'focus-pulse': focusedMatchIds.includes(match.id) }"
                     :style="getGroupMatchGridStyle(activeGroupedSection, round.length, matchIndex)"
                   >
                     <MatchCard
@@ -609,7 +757,7 @@ defineExpose({
                     :key="match.id"
                     :ref="(el) => setMatchRef(match.id, el)"
                     class="match-shell"
-                    :class="{ 'has-repechage': getRepechageMatchForMatch(match) }"
+                    :class="{ 'has-repechage': getRepechageMatchForMatch(match), 'focus-pulse': focusedMatchIds.includes(match.id) }"
                     :style="getFinalMatchGridStyle(round.length, matchIndex)"
                   >
                     <MatchCard
@@ -687,6 +835,59 @@ defineExpose({
           </header>
 
           <div class="repechage-modal-body">
+            <template v-if="!bracket.repechage?.enabled">
+              <div v-if="!maxRepechageEntryCount" class="repechage-status-card">
+                <span>無需啟動</span>
+                <strong>本賽程無需敗部復活</strong>
+                <p>目前賽程沒有連續輪空兩次的支線。</p>
+              </div>
+              <template v-else>
+                <div class="repechage-status-card">
+                  <span>執行中啟用</span>
+                  <strong>最多可安插 {{ maxRepechageEntryCount }} 位第一輪敗者</strong>
+                  <p>
+                    系統只會在同一支線原本會連續輪空兩次時啟動，第一輪完成後依設定名額安插第一輪敗者。
+                  </p>
+                </div>
+                <div class="repechage-live-settings">
+                  <div class="segmented repechage-mode-control" role="radiogroup" aria-label="敗部復活選人方式">
+                    <button
+                      type="button"
+                      :class="{ active: draftSelectionMode === 'random' }"
+                      @click="draftSelectionMode = 'random'"
+                    >
+                      隨機抽選
+                    </button>
+                    <button
+                      type="button"
+                      :class="{ active: draftSelectionMode === 'manual' }"
+                      @click="draftSelectionMode = 'manual'"
+                    >
+                      手動指定
+                    </button>
+                  </div>
+                  <label class="repechage-entry-field">
+                    <span>復活名額</span>
+                    <input
+                      :value="clampedDraftEntryCount"
+                      type="number"
+                      min="1"
+                      :max="maxRepechageEntryCount"
+                      @change="onDraftEntryCountChange"
+                    />
+                  </label>
+                </div>
+                <p v-if="draftAffectedResultCount" class="repechage-impact-warning">
+                  啟用後將清除 {{ draftAffectedResultCount }} 場已完成場次的成績，需重新輸入。
+                </p>
+                <div class="stage-actions">
+                  <button type="button" class="primary-action" @click="applyRepechageSettings(true)">
+                    啟用敗部復活
+                  </button>
+                </div>
+              </template>
+            </template>
+            <template v-else>
             <div class="repechage-status-card">
               <span>需求</span>
               <strong v-if="repechageTargets.length">
@@ -704,6 +905,56 @@ defineExpose({
               <strong>{{ firstRoundState.completed }} / {{ firstRoundState.total }}</strong>
               <p>{{ firstRoundState.complete ? '第一輪已完成，可以設定敗部復活。' : '請先完成所有第一輪可比賽場次。' }}</p>
             </div>
+
+            <div v-if="!repechageSettingsLocked" class="repechage-status-card repechage-live-adjust">
+              <span>調整設定</span>
+              <div class="repechage-live-settings">
+                <div class="segmented repechage-mode-control" role="radiogroup" aria-label="敗部復活選人方式">
+                  <button
+                    type="button"
+                    :class="{ active: draftSelectionMode === 'random' }"
+                    @click="draftSelectionMode = 'random'"
+                  >
+                    隨機抽選
+                  </button>
+                  <button
+                    type="button"
+                    :class="{ active: draftSelectionMode === 'manual' }"
+                    @click="draftSelectionMode = 'manual'"
+                  >
+                    手動指定
+                  </button>
+                </div>
+                <label class="repechage-entry-field">
+                  <span>復活名額</span>
+                  <input
+                    :value="clampedDraftEntryCount"
+                    type="number"
+                    min="1"
+                    :max="maxRepechageEntryCount"
+                    @change="onDraftEntryCountChange"
+                  />
+                </label>
+              </div>
+              <div class="stage-actions">
+                <button type="button" class="secondary-action" @click="applyRepechageSettings(true)">
+                  套用調整
+                </button>
+                <button type="button" class="secondary-action" @click="applyRepechageSettings(false)">
+                  停用敗部復活
+                </button>
+              </div>
+              <p class="repechage-live-note">
+                停用後空位將恢復為輪空自動晉級；先前被清除的成績不會自動恢復。
+              </p>
+            </div>
+            <p v-else class="repechage-live-note">
+              {{
+                repechageStarted
+                  ? '敗部復活相關場次已開打，設定已鎖定。'
+                  : '復活名單已安插；如需調整設定或停用，請先點「重新選擇」。'
+              }}
+            </p>
 
             <template v-if="repechageTargets.length && firstRoundState.complete">
               <div v-if="repechageSelectionMode === 'manual'" class="repechage-manual-list">
@@ -763,6 +1014,7 @@ defineExpose({
                   重新選擇
                 </button>
               </div>
+            </template>
             </template>
           </div>
         </section>
