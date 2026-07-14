@@ -19,6 +19,7 @@ import { usePanZoom } from '../composables/usePanZoom'
 const VIEW_MODES = [
   { value: 'ladder', label: '標準' },
   { value: 'columns', label: '橫向' },
+  { value: 'mirror', label: '對稱' },
   { value: 'groups', label: '分組' },
 ]
 
@@ -56,9 +57,31 @@ const draftEntryCount = ref(2)
 const rounds = computed(() => deriveRounds(props.bracket))
 const displayRounds = computed(() => (viewMode.value === 'ladder' ? [...rounds.value].reverse() : rounds.value))
 const baseMatchCount = computed(() => Math.max(1, rounds.value[0]?.length ?? 1))
+const halfMatchCount = computed(() => Math.max(1, baseMatchCount.value / 2))
+const mirrorColumns = computed(() => {
+  const rs = rounds.value
+  if (rs.length < 2) return []
+  const finalMatch = rs[rs.length - 1][0]
+  const body = rs.slice(0, rs.length - 1)
+  const left = body.map((round, index) => ({
+    key: `L${index}`,
+    side: 'left',
+    matches: round.slice(0, round.length / 2),
+  }))
+  const right = body.map((round, index) => ({
+    key: `R${index}`,
+    side: 'right',
+    matches: round.slice(round.length / 2),
+  }))
+  return [...left, { key: 'final', side: 'final', matches: [finalMatch] }, ...right.reverse()]
+})
 const bracketGroups = computed(() => getBracketGroups(props.bracket))
 const availableViewModes = computed(() =>
-  bracketGroups.value.length > 1 ? VIEW_MODES : VIEW_MODES.filter((mode) => mode.value !== 'groups'),
+  VIEW_MODES.filter((mode) => {
+    if (mode.value === 'groups') return bracketGroups.value.length > 1
+    if (mode.value === 'mirror') return bracketGroups.value.length <= 1 && baseMatchCount.value >= 2
+    return true
+  }),
 )
 const playerMap = computed(() => getPlayerMap(props.bracket.players))
 const podium = computed(() => getPodium(props.bracket))
@@ -205,6 +228,14 @@ function getMatchGridStyle(roundLength, matchIndex) {
   }
   return {
     gridColumn: `${Math.floor(matchIndex * span) + 1} / span ${Math.floor(span)}`,
+  }
+}
+
+function getMirrorMatchGridStyle(column, localIndex) {
+  if (column.side === 'final') return {}
+  const span = Math.max(1, halfMatchCount.value / Math.max(1, column.matches.length))
+  return {
+    gridRow: `${Math.floor(localIndex * span) + 1} / span ${Math.floor(span)}`,
   }
 }
 
@@ -401,6 +432,37 @@ async function updateLines() {
       const parentRect = getRect(parent.id)
       if (!childRect || !parentRect) return
 
+      if (viewMode.value === 'mirror') {
+        const childOnLeft = match.matchIndex < round.length / 2
+        const y1 = childRect.y + childRect.height / 2
+        const y2 = parentRect.y + parentRect.height / 2
+        let x1
+        let x2
+        let midX
+        if (childOnLeft) {
+          x1 = childRect.x + childRect.width
+          x2 = parentRect.x
+          midX = x1 + Math.max(28, (x2 - x1) / 2)
+        } else {
+          x1 = childRect.x
+          x2 = parentRect.x + parentRect.width
+          midX = x1 - Math.max(28, (x1 - x2) / 2)
+        }
+        nextLines.push({
+          id: `${match.id}-${parent.id}`,
+          points: `${x1},${y1} ${midX},${y1} ${midX},${y2} ${x2},${y2}`,
+        })
+        if (match.result && (match.result.scoreA !== null || match.result.scoreB !== null)) {
+          nextScoreLabels.push({
+            id: `${match.id}-score`,
+            x: midX,
+            y: (y1 + y2) / 2 - 10,
+            text: `${match.result.scoreA ?? ''} : ${match.result.scoreB ?? ''}`,
+          })
+        }
+        return
+      }
+
       const isLadder = viewMode.value !== 'columns'
       const x1 = isLadder ? childRect.x + childRect.width / 2 : childRect.x + childRect.width
       const y1 = isLadder ? childRect.y : childRect.y + childRect.height / 2
@@ -465,6 +527,7 @@ watch(
 watch(viewMode, updateLines, { flush: 'post' })
 watch(bracketGroups, (groups) => {
   if (viewMode.value === 'groups' && groups.length <= 1) viewMode.value = 'ladder'
+  if (viewMode.value === 'mirror' && groups.length > 1) viewMode.value = 'ladder'
   if (!groupTabs.value.some((tab) => tab.value === activeGroupTab.value)) {
     activeGroupTab.value = groupTabs.value[0]?.value ?? 'group-0'
   }
@@ -646,7 +709,7 @@ defineExpose({
             {{ label.text }}
           </div>
 
-          <div v-if="viewMode !== 'groups'" class="round-stack" :style="{ '--base-match-count': baseMatchCount }">
+          <div v-if="viewMode !== 'groups' && viewMode !== 'mirror'" class="round-stack" :style="{ '--base-match-count': baseMatchCount }">
             <div
               v-for="(round, visualIndex) in displayRounds"
               :key="visualIndex"
@@ -664,6 +727,40 @@ defineExpose({
                   {{ getMatchGroup(match).label }} 組
                   <span>{{ getMatchGroup(match).playerCount }} 人</span>
                 </div>
+                <MatchCard
+                  :match="match"
+                  :player-map="playerMap"
+                  @set-result="(...args) => emit('set-result', ...args)"
+                  @update-score="(...args) => emit('update-score', ...args)"
+                />
+                <div v-if="getRepechageMatchForMatch(match)" class="repechage-branch">
+                  <div class="repechage-branch-title">敗部復活</div>
+                  <MatchCard
+                    :match="getRepechageMatchForMatch(match)"
+                    :player-map="playerMap"
+                    @set-result="(...args) => emit('set-result', ...args)"
+                    @update-score="(...args) => emit('update-score', ...args)"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div v-else-if="viewMode === 'mirror'" class="mirror-stack" :style="{ '--half-match-count': halfMatchCount }">
+            <div
+              v-for="column in mirrorColumns"
+              :key="column.key"
+              class="mirror-column"
+              :class="`side-${column.side}`"
+            >
+              <div
+                v-for="(match, localIndex) in column.matches"
+                :key="match.id"
+                :ref="(el) => setMatchRef(match.id, el)"
+                class="match-shell"
+                :class="{ 'has-repechage': getRepechageMatchForMatch(match), 'focus-pulse': focusedMatchIds.includes(match.id) }"
+                :style="getMirrorMatchGridStyle(column, localIndex)"
+              >
                 <MatchCard
                   :match="match"
                   :player-map="playerMap"

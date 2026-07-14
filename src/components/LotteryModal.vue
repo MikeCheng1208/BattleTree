@@ -1,6 +1,7 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useLottery } from '../composables/useLottery'
+import { useLotteryFx } from '../composables/useLotteryFx'
 
 const props = defineProps({
   bracket: {
@@ -16,6 +17,9 @@ const {
   currentHighlightId,
   winnerId,
   isRolling,
+  drawPhase,
+  countdown,
+  flyingCards,
   playerMap,
   filterOptions,
   candidatePool,
@@ -28,6 +32,10 @@ const {
   drawOne,
 } = useLottery(bracketRef, (lottery) => emit('update-lottery', lottery))
 
+const stageEl = ref(null)
+const flyCardEls = ref([])
+useLotteryFx({ drawPhase, stageEl, flyCardEls })
+
 const lottery = computed(() => props.bracket.lottery)
 const activePool = computed(() => lottery.value.pool ?? [])
 const drawn = computed(() => lottery.value.drawn ?? [])
@@ -35,11 +43,27 @@ const displayId = computed(() => winnerId.value || currentHighlightId.value || a
 const stageClass = computed(() => ({
   rolling: isRolling.value,
   settled: Boolean(winnerId.value) && !isRolling.value,
+  converging: drawPhase.value === 'converge',
+  suspense: drawPhase.value === 'suspense',
+  revealing: drawPhase.value === 'reveal',
+}))
+const fxClass = computed(() => `phase-${drawPhase.value}`)
+const showFxLayer = computed(() => drawPhase.value !== 'idle' && drawPhase.value !== 'settled')
+const confettiPieces = Array.from({ length: 60 }, (_, index) => ({
+  key: index,
+  style: {
+    '--confetti-x': `${((Math.random() * 2 - 1) * 45).toFixed(1)}vw`,
+    '--confetti-y': `${((Math.random() * 2 - 1) * 45).toFixed(1)}vh`,
+    '--confetti-rotate': `${Math.round((Math.random() * 2 - 1) * 420)}deg`,
+    '--confetti-delay': `${Math.round(Math.random() * 240)}ms`,
+    '--confetti-width': `${6 + Math.round(Math.random() * 6)}px`,
+    '--confetti-height': `${10 + Math.round(Math.random() * 10)}px`,
+  },
 }))
 </script>
 
 <template>
-  <div class="modal-backdrop" @click.self="$emit('close')">
+  <div class="modal-backdrop" :class="{ 'fx-shake': drawPhase === 'reveal' }" @click.self="$emit('close')">
     <section class="modal-panel lottery-panel">
       <header class="modal-header">
         <h2>抽籤</h2>
@@ -115,7 +139,7 @@ const stageClass = computed(() => ({
 
         <div class="lottery-stage-layout">
           <div class="lottery-draw-area">
-            <div class="lottery-card-stage" :class="stageClass">
+            <div ref="stageEl" class="lottery-card-stage" :class="stageClass">
               <div class="lottery-stage-glow" aria-hidden="true"></div>
               <div class="lottery-deck-burst" aria-hidden="true">
                 <span></span>
@@ -176,4 +200,22 @@ const stageClass = computed(() => ({
       </div>
     </section>
   </div>
+
+  <Teleport to="body">
+    <div v-if="showFxLayer" class="lottery-fx-layer" :class="fxClass" aria-hidden="true">
+      <div class="fx-dim"></div>
+      <div class="fx-spotlight fx-spotlight-a"></div>
+      <div class="fx-spotlight fx-spotlight-b"></div>
+      <div v-for="card in flyingCards" :key="card.key" ref="flyCardEls" class="fx-fly-card">
+        <span>#{{ card.seed }}</span>
+        <strong>{{ card.name }}</strong>
+      </div>
+      <div v-if="countdown" :key="countdown" class="fx-countdown">{{ countdown }}</div>
+      <div class="fx-shockwave"></div>
+      <div class="fx-confetti">
+        <span v-for="piece in confettiPieces" :key="piece.key" :style="piece.style"></span>
+      </div>
+      <div class="fx-flash"></div>
+    </div>
+  </Teleport>
 </template>

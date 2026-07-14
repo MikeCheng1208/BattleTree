@@ -2228,6 +2228,37 @@ input {
   min-height: calc(var(--match-row-size) * 2 + 34px);
 }
 
+.bracket-board.view-mirror .mirror-stack {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: row;
+  gap: var(--round-gap);
+  align-items: stretch;
+}
+
+.bracket-board.view-mirror .mirror-column {
+  display: grid;
+  grid-template-columns: var(--match-width);
+  grid-template-rows: repeat(var(--half-match-count), var(--match-row-size));
+  row-gap: 18px;
+  column-gap: 0;
+}
+
+.bracket-board.view-mirror .mirror-column.side-final {
+  display: flex;
+  align-items: center;
+}
+
+.bracket-board.view-mirror .match-shell {
+  align-self: center;
+}
+
+.bracket-board.view-mirror .match-shell.has-repechage {
+  width: var(--match-width);
+  min-height: calc(var(--match-row-size) * 2 + 34px);
+}
+
 .grouped-board {
   position: relative;
   z-index: 1;
@@ -2358,6 +2389,23 @@ input {
 }
 
 .bracket-board.view-columns .repechage-branch::before {
+  top: auto;
+  right: auto;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  width: 0;
+  height: 26px;
+  border-top: 0;
+  border-left: 2px dashed #d97706;
+}
+
+.bracket-board.view-mirror .repechage-branch {
+  top: calc(100% + 30px);
+  left: 0;
+  transform: none;
+}
+
+.bracket-board.view-mirror .repechage-branch::before {
   top: auto;
   right: auto;
   bottom: calc(100% + 4px);
@@ -3820,6 +3868,384 @@ input {
   100% {
     opacity: 0;
     transform: translate(calc(-50% + var(--confetti-x)), calc(-50% + var(--confetti-y) + 96px)) scale(0.72) rotate(calc(var(--confetti-rotate) + 120deg));
+  }
+}
+
+.lottery-fx-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.fx-dim {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 45%, transparent 30%, rgba(0, 0, 0, 0.35) 78%);
+  opacity: 0;
+  animation: fx-dim-in 700ms ease-out forwards;
+}
+
+.lottery-fx-layer.phase-reveal .fx-dim {
+  animation: fx-dim-out 900ms ease-out forwards;
+}
+
+.fx-spotlight {
+  position: absolute;
+  top: -12vh;
+  width: 46vw;
+  height: 124vh;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0.08) 62%, transparent);
+  clip-path: polygon(42% 0, 58% 0, 100% 100%, 0 100%);
+  mix-blend-mode: overlay;
+  opacity: 0;
+  transform-origin: 50% 0;
+  filter: blur(6px);
+}
+
+.fx-spotlight-a {
+  left: 4vw;
+  --spot-lock: 16deg;
+  animation: fx-spot-sweep-a 2.4s ease-in-out infinite;
+}
+
+.fx-spotlight-b {
+  right: 4vw;
+  --spot-lock: -16deg;
+  animation: fx-spot-sweep-b 2.6s ease-in-out infinite;
+}
+
+.lottery-fx-layer.phase-converge .fx-spotlight,
+.lottery-fx-layer.phase-suspense .fx-spotlight,
+.lottery-fx-layer.phase-reveal .fx-spotlight {
+  animation: fx-spot-lock 900ms ease-out forwards;
+}
+
+.fx-fly-card {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 132px;
+  min-height: 70px;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  padding: 10px;
+  border: 2px solid var(--ink);
+  border-radius: var(--radius);
+  color: var(--ink);
+  background: var(--on-ink);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+  text-align: center;
+  opacity: 0;
+  will-change: transform;
+}
+
+.fx-fly-card span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.fx-fly-card strong {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fx-countdown {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--on-ink);
+  font-size: clamp(96px, 18vw, 220px);
+  font-weight: 950;
+  -webkit-text-stroke: 3px var(--ink);
+  text-shadow:
+    0 0 34px rgba(0, 0, 0, 0.5),
+    0 8px 24px rgba(0, 0, 0, 0.45);
+  animation: fx-countdown-pop 900ms cubic-bezier(0.16, 0.8, 0.22, 1) both;
+}
+
+.fx-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+}
+
+.lottery-fx-layer.phase-reveal .fx-flash {
+  animation: fx-white-flash 320ms ease-out both;
+}
+
+.fx-shockwave {
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  width: 120px;
+  height: 120px;
+  border: 4px solid rgba(255, 255, 255, 0.9);
+  border-radius: 999px;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.2);
+}
+
+.lottery-fx-layer.phase-reveal .fx-shockwave {
+  animation: fx-shockwave 720ms ease-out both;
+}
+
+.fx-confetti {
+  position: absolute;
+  inset: 0;
+}
+
+.fx-confetti span {
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  width: var(--confetti-width, 8px);
+  height: var(--confetti-height, 16px);
+  border-radius: 2px;
+  background: var(--confetti-color, var(--ink));
+  opacity: 0;
+}
+
+.fx-confetti span:nth-child(3n) {
+  --confetti-color: var(--on-ink);
+  border: 1px solid rgba(0, 0, 0, 0.32);
+}
+
+.fx-confetti span:nth-child(3n + 1) {
+  --confetti-color: var(--ink);
+}
+
+.fx-confetti span:nth-child(3n + 2) {
+  --confetti-color: #9a9a9a;
+}
+
+.lottery-fx-layer.phase-reveal .fx-confetti span {
+  animation: fx-confetti-burst 1300ms cubic-bezier(0.16, 0.8, 0.22, 1) var(--confetti-delay, 0ms) both;
+}
+
+.modal-backdrop.fx-shake {
+  animation: fx-screen-shake 420ms ease-out;
+}
+
+.lottery-card-stage.rolling .draw-focus-card.winner {
+  animation: winner-card-reveal-clean 860ms cubic-bezier(0.16, 0.8, 0.22, 1) both;
+}
+
+.lottery-card-stage.converging .draw-focus-card {
+  animation: draw-card-shuffle 620ms cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+}
+
+.lottery-card-stage.suspense .draw-focus-card {
+  animation: fx-suspense-pulse 460ms ease-in-out infinite;
+}
+
+.lottery-card-stage.converging::after,
+.lottery-card-stage.suspense::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  z-index: 4;
+  width: min(380px, 80%);
+  aspect-ratio: 1;
+  border-radius: 999px;
+  background: conic-gradient(var(--ink) calc(var(--fx-ring, 0) * 1turn), transparent 0);
+  -webkit-mask: radial-gradient(closest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
+  mask: radial-gradient(closest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
+  transform: translate(-50%, -50%);
+  animation: fx-ring-fill 1.4s linear forwards;
+  pointer-events: none;
+}
+
+@property --fx-ring {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
+
+@keyframes fx-ring-fill {
+  to {
+    --fx-ring: 1;
+  }
+}
+
+@keyframes fx-dim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fx-dim-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes fx-spot-sweep-a {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: rotate(-22deg);
+  }
+  50% {
+    opacity: 0.75;
+    transform: rotate(26deg);
+  }
+}
+
+@keyframes fx-spot-sweep-b {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: rotate(24deg);
+  }
+  50% {
+    opacity: 0.75;
+    transform: rotate(-26deg);
+  }
+}
+
+@keyframes fx-spot-lock {
+  to {
+    opacity: 0.9;
+    transform: rotate(var(--spot-lock, 0deg));
+  }
+}
+
+@keyframes fx-countdown-pop {
+  0% {
+    opacity: 0;
+    transform: scale(2.6);
+    filter: blur(6px);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+  78% {
+    opacity: 1;
+    transform: scale(0.94);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+}
+
+@keyframes fx-white-flash {
+  0% {
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.92;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes fx-screen-shake {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(0);
+  }
+  20% {
+    transform: translate(-7px, 5px) rotate(-0.4deg);
+  }
+  40% {
+    transform: translate(6px, -6px) rotate(0.35deg);
+  }
+  60% {
+    transform: translate(-5px, 3px) rotate(-0.25deg);
+  }
+  80% {
+    transform: translate(3px, -2px) rotate(0.15deg);
+  }
+}
+
+@keyframes fx-shockwave {
+  0% {
+    opacity: 0.9;
+    transform: translate(-50%, -50%) scale(0.2);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(6);
+  }
+}
+
+@keyframes fx-confetti-burst {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.2) rotate(0deg);
+  }
+  10% {
+    opacity: 1;
+  }
+  62% {
+    opacity: 1;
+    transform: translate(calc(-50% + var(--confetti-x)), calc(-50% + var(--confetti-y))) scale(1) rotate(var(--confetti-rotate));
+  }
+  100% {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--confetti-x)), calc(-50% + var(--confetti-y) + 18vh)) scale(0.7) rotate(calc(var(--confetti-rotate) + 140deg));
+  }
+}
+
+@keyframes fx-suspense-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 30px 68px rgba(0, 0, 0, 0.22);
+  }
+  40% {
+    transform: scale(1.05);
+    box-shadow: 0 34px 76px rgba(0, 0, 0, 0.32);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lottery-fx-layer .fx-dim,
+  .lottery-fx-layer .fx-spotlight,
+  .lottery-fx-layer .fx-fly-card,
+  .lottery-fx-layer .fx-flash,
+  .lottery-fx-layer .fx-shockwave,
+  .lottery-fx-layer .fx-confetti {
+    display: none;
+  }
+
+  .modal-backdrop.fx-shake {
+    animation: none;
+  }
+
+  .draw-focus-card,
+  .lottery-card-stage.rolling .draw-focus-card,
+  .lottery-card-stage.converging .draw-focus-card,
+  .lottery-card-stage.suspense .draw-focus-card,
+  .lottery-card-stage.rolling .deck-stack span,
+  .lottery-card-stage.rolling .lottery-deck-burst span,
+  .lottery-card-stage.rolling .lottery-card-rail .lottery-card {
+    animation: none;
+  }
+
+  .lottery-card-stage.converging::after,
+  .lottery-card-stage.suspense::after {
+    content: none;
   }
 }
 
