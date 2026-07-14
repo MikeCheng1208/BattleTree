@@ -39,6 +39,12 @@ export function sortPlayersBySeed(players) {
   return [...players].sort((a, b) => Number(a.seed) - Number(b.seed))
 }
 
+function hasAdjacentSeeds(playerA, playerB) {
+  const seedA = Number(playerA?.seed)
+  const seedB = Number(playerB?.seed)
+  return Number.isFinite(seedA) && Number.isFinite(seedB) && Math.abs(seedA - seedB) === 1
+}
+
 function createSequentialSlots(players, size) {
   const slots = Array.from({ length: size }, () => null)
   players.forEach((player, index) => {
@@ -185,16 +191,111 @@ export function createSlots(players, pairingMode = 'order') {
   return createGroupedSlots(players, pairingMode, 1).slotsData
 }
 
-export function createGroupedSlots(players, pairingMode = 'order', groupCount = 1) {
-  const bracketSize = getBracketSize(players.length)
-  const orderedPlayers = pairingMode === 'random' ? shufflePlayers(players) : sortPlayersBySeed(players)
-  const safeGroupCount = Math.max(1, Math.min(Number(groupCount) || 1, Math.floor(players.length / 2) || 1))
+function getGroupSizes(playerCount, safeGroupCount) {
+  if (safeGroupCount <= 1) return [playerCount]
+  const groupPlayerCount = Math.ceil(playerCount / safeGroupCount)
+  return Array.from({ length: safeGroupCount }, (_, groupIndex) => {
+    const start = groupIndex * groupPlayerCount
+    return Math.max(0, Math.min(groupPlayerCount, playerCount - start))
+  })
+}
+
+function getFirstRoundOrderBlocks(playerCount, safeGroupCount) {
+  const blocks = []
+  let offset = 0
+
+  getGroupSizes(playerCount, safeGroupCount).forEach((groupSize) => {
+    for (let localIndex = 0; localIndex < groupSize; localIndex += 2) {
+      const indexes = [offset + localIndex]
+      if (localIndex + 1 < groupSize) indexes.push(offset + localIndex + 1)
+      blocks.push({ type: indexes.length === 2 ? 'pair' : 'single', indexes })
+    }
+    offset += groupSize
+  })
+
+  return blocks
+}
+
+function takeCompatiblePair(remaining) {
+  const indexes = shufflePlayers(Array.from({ length: remaining.length }, (_, index) => index))
+
+  for (const firstIndex of indexes) {
+    const secondIndexes = shufflePlayers(indexes.filter((index) => index !== firstIndex))
+    const secondIndex = secondIndexes.find((index) => !hasAdjacentSeeds(remaining[firstIndex], remaining[index]))
+    if (secondIndex === undefined) continue
+
+    const sortedIndexes = [firstIndex, secondIndex].sort((a, b) => b - a)
+    const pair = []
+    sortedIndexes.forEach((index) => {
+      pair.unshift(remaining.splice(index, 1)[0])
+    })
+    return shufflePlayers(pair)
+  }
+
+  return null
+}
+
+function countAdjacentSeedPairings(orderedPlayers, safeGroupCount) {
+  return getFirstRoundOrderBlocks(orderedPlayers.length, safeGroupCount).filter(
+    (block) =>
+      block.type === 'pair' &&
+      hasAdjacentSeeds(orderedPlayers[block.indexes[0]], orderedPlayers[block.indexes[1]]),
+  ).length
+}
+
+function arrangePlayersAvoidingAdjacentSeeds(players, safeGroupCount) {
+  const blocks = getFirstRoundOrderBlocks(players.length, safeGroupCount)
+  const pairBlocks = blocks.filter((block) => block.type === 'pair')
+  const singleBlocks = blocks.filter((block) => block.type === 'single')
+  if (!pairBlocks.length) return shufflePlayers(players)
+
+  let bestOrder = shufflePlayers(players)
+  let bestViolationCount = countAdjacentSeedPairings(bestOrder, safeGroupCount)
+  if (!bestViolationCount) return bestOrder
+
+  for (let attempt = 0; attempt < 2000; attempt += 1) {
+    const remaining = shufflePlayers(players)
+    const orderedPlayers = Array.from({ length: players.length }, () => null)
+    const shuffledPairBlocks = shufflePlayers(pairBlocks)
+    let valid = true
+
+    for (const block of shuffledPairBlocks) {
+      const pair = takeCompatiblePair(remaining)
+      if (!pair) {
+        valid = false
+        break
+      }
+      orderedPlayers[block.indexes[0]] = pair[0]
+      orderedPlayers[block.indexes[1]] = pair[1]
+    }
+
+    if (valid) {
+      shufflePlayers(singleBlocks).forEach((block) => {
+        orderedPlayers[block.indexes[0]] = remaining.pop()
+      })
+    }
+
+    if (!valid || orderedPlayers.some((player) => !player)) continue
+
+    const violationCount = countAdjacentSeedPairings(orderedPlayers, safeGroupCount)
+    if (!violationCount) return orderedPlayers
+    if (violationCount < bestViolationCount) {
+      bestOrder = orderedPlayers
+      bestViolationCount = violationCount
+    }
+  }
+
+  return bestOrder
+}
+
+function createGroupedSlotsFromOrderedPlayers(orderedPlayers, safeGroupCount) {
+  const bracketSize = getBracketSize(orderedPlayers.length)
   if (safeGroupCount <= 1) {
     const slots = createSequentialSlots(orderedPlayers, bracketSize)
 
     return {
       slotsData: { bracketSize, slots },
-      groups: [{ label: 'A', startSlot: 0, slotCount: bracketSize, playerCount: players.length }],
+      groups: [{ label: 'A', startSlot: 0, slotCount: bracketSize, playerCount: orderedPlayers.length }],
     }
   }
 
@@ -221,6 +322,15 @@ export function createGroupedSlots(players, pairingMode = 'order', groupCount = 
     slotsData: { bracketSize: slots.length, slots },
     groups,
   }
+}
+
+export function createGroupedSlots(players, pairingMode = 'order', groupCount = 1) {
+  const safeGroupCount = Math.max(1, Math.min(Number(groupCount) || 1, Math.floor(players.length / 2) || 1))
+  const orderedPlayers =
+    pairingMode === 'random'
+      ? arrangePlayersAvoidingAdjacentSeeds(players, safeGroupCount)
+      : sortPlayersBySeed(players)
+  return createGroupedSlotsFromOrderedPlayers(orderedPlayers, safeGroupCount)
 }
 
 export function getGroupLabel(index) {
