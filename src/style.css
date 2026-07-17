@@ -1594,6 +1594,92 @@ input {
   background: rgba(102, 217, 255, 0.08);
 }
 
+.csv-column-backdrop {
+  z-index: 120;
+}
+
+.csv-column-modal {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.csv-column-body {
+  display: grid;
+  gap: 16px;
+}
+
+.csv-column-body > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.7;
+}
+
+.csv-column-group {
+  display: grid;
+  gap: 8px;
+}
+
+.csv-column-group-label {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.csv-column-list {
+  display: grid;
+  gap: 8px;
+  max-height: min(30vh, 280px);
+  overflow: auto;
+}
+
+.csv-column-option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.csv-column-option {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-strong);
+  text-align: left;
+  cursor: pointer;
+}
+
+.csv-column-option strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.csv-column-option span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.csv-column-option.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.csv-column-option.active strong {
+  color: var(--accent);
+}
+
+.csv-column-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .segmented,
 .filter-row,
 .stage-actions {
@@ -1682,7 +1768,7 @@ input {
 .player-editor-head,
 .player-row {
   display: grid;
-  grid-template-columns: 100px minmax(0, 1fr) 72px 72px;
+  grid-template-columns: 100px minmax(0, 1.2fr) minmax(0, 1fr) 72px 72px;
   gap: 10px;
   align-items: center;
 }
@@ -4513,7 +4599,7 @@ input {
 
   .player-editor-head,
   .player-row {
-    grid-template-columns: minmax(52px, 1.6fr) minmax(0, 7fr) 38px 48px;
+    grid-template-columns: minmax(52px, 1.6fr) minmax(0, 4fr) minmax(0, 3fr) 38px 48px;
     gap: 6px;
   }
 

@@ -18,7 +18,7 @@ defineEmits(['win'])
   <div class="player-slot" :class="{ winner: isWinner, loser: isLoser, empty: !player, repechage: isRepechageEntry }">
     <div v-if="player" class="player-meta">
       <span class="seed">#{{ player.seed }}</span>
-      <strong>{{ player.name }}</strong>
+      <strong>{{ player.displayName ?? player.name }}</strong>
     </div>
     <div v-else class="player-meta muted">
       <span class="seed">BYE</span>

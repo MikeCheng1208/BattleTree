@@ -438,7 +438,7 @@ onBeforeUnmount(() => {
             <span class="result-rank">{{ row.rank }}</span>
             <div>
               <span>{{ row.label }}</span>
-              <strong>{{ row.player?.name }}</strong>
+              <strong>{{ row.player?.displayName }}</strong>
             </div>
             <small>#{{ row.player?.seed }}</small>
           </li>

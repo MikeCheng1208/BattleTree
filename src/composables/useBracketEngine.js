@@ -691,6 +691,7 @@ export function buildInitialPlayers(count) {
   return Array.from({ length: count }, (_, index) => ({
     id: createId('player'),
     name: `Player${index + 1}`,
+    title: '',
     seed: index + 1,
     registrationConfirmed: false,
   }))

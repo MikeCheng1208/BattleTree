@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import csvHelpOpenSheet from '../assets/01-打開試算表.png'
 import csvHelpNameColumn from '../assets/02-確認一定欄位名稱要是姓名.png'
 import csvHelpDownloadCsv from '../assets/03-匯出csv.png'
-import { parseCsvPlayerNames } from '../composables/useCsvPlayers'
+import { extractPlayerEntries, parseCsvTable } from '../composables/useCsvPlayers'
 import { getRepechageRequirements, validatePlayers } from '../composables/useBracketEngine'
 
 const props = defineProps({
@@ -37,6 +37,12 @@ const importErrors = ref([])
 const importSummary = ref('')
 const csvInputRef = ref(null)
 const showCsvHelp = ref(false)
+const showCsvColumnPicker = ref(false)
+const csvHeader = ref([])
+const csvRows = ref([])
+const csvSelectedColumn = ref(0)
+const csvSelectedTitleColumn = ref(-1)
+const csvColumnErrors = ref([])
 const showRepechageExplainer = ref(false)
 const csvHelpSteps = [
   {
@@ -47,7 +53,7 @@ const csvHelpSteps = [
   {
     image: csvHelpNameColumn,
     title: '確認姓名欄位',
-    description: '輸入名字的欄位一定要叫「姓名」，不可以有其他多餘文字、空白、括號或符號。',
+    description: '確認試算表裡有一欄是選手名字。匯入時可以自行選擇要用哪個欄位；欄位名稱是「姓名」時會自動預選。',
   },
   {
     image: csvHelpDownloadCsv,
@@ -86,6 +92,22 @@ function generate() {
   if (!submitErrors.value.length) emit('generate')
 }
 
+const csvColumnOptions = computed(() =>
+  csvHeader.value.map((label, index) => {
+    const previews = []
+    for (const row of csvRows.value) {
+      const value = row[index]?.trim()
+      if (value) previews.push(value)
+      if (previews.length >= 3) break
+    }
+    return {
+      index,
+      label: label || `第 ${index + 1} 欄`,
+      preview: previews.join('、') || '（無資料）',
+    }
+  }),
+)
+
 async function handleCsvImport(event) {
   const file = event.target.files?.[0]
   event.target.value = ''
@@ -95,18 +117,57 @@ async function handleCsvImport(event) {
 
   try {
     const text = await file.text()
-    const { names, errors } = parseCsvPlayerNames(text)
+    const { header, rows, defaultColumnIndex, defaultTitleColumnIndex, errors } = parseCsvTable(text)
     if (errors.length) {
       importErrors.value = errors
       return
     }
 
-    emit('import-players', names)
-    playerCount.value = names.length
-    importSummary.value = `已匯入 ${names.length} 位參賽者`
+    csvHeader.value = header
+    csvRows.value = rows
+    csvSelectedColumn.value = defaultColumnIndex === -1 ? 0 : defaultColumnIndex
+    csvSelectedTitleColumn.value =
+      defaultTitleColumnIndex === csvSelectedColumn.value ? -1 : defaultTitleColumnIndex
+    csvColumnErrors.value = []
+    showCsvColumnPicker.value = true
   } catch (error) {
     importErrors.value = [error instanceof Error ? error.message : 'CSV 讀取失敗，請確認檔案格式']
   }
+}
+
+function selectCsvNameColumn(index) {
+  csvSelectedColumn.value = index
+  if (csvSelectedTitleColumn.value === index) csvSelectedTitleColumn.value = -1
+  csvColumnErrors.value = []
+}
+
+function selectCsvTitleColumn(index) {
+  csvSelectedTitleColumn.value = index
+  csvColumnErrors.value = []
+}
+
+function confirmCsvColumn() {
+  const { entries, errors } = extractPlayerEntries(
+    csvRows.value,
+    csvSelectedColumn.value,
+    csvSelectedTitleColumn.value,
+  )
+  if (errors.length) {
+    csvColumnErrors.value = errors
+    return
+  }
+
+  emit('import-players', entries)
+  playerCount.value = entries.length
+  importSummary.value = `已匯入 ${entries.length} 位參賽者`
+  closeCsvColumnPicker()
+}
+
+function closeCsvColumnPicker() {
+  showCsvColumnPicker.value = false
+  csvHeader.value = []
+  csvRows.value = []
+  csvColumnErrors.value = []
 }
 </script>
 
@@ -174,7 +235,7 @@ async function handleCsvImport(event) {
     <div class="player-editor-toolbar">
       <div>
         <strong>參賽名單</strong>
-        <span>移除會保留原編號，需要時再手動重新排序。</span>
+        <span>移除會保留原編號，需要時再手動重新排序。有填稱號的選手，對戰表會顯示稱號。</span>
       </div>
       <button type="button" class="secondary-action reseed-button" @click="emit('reorder-player-seeds')">
         重新排序參賽編號
@@ -208,6 +269,7 @@ async function handleCsvImport(event) {
       <div class="player-editor-head">
         <span>編號</span>
         <span>選手姓名</span>
+        <span>稱號</span>
         <span>確認</span>
         <span>移除</span>
       </div>
@@ -217,6 +279,12 @@ async function handleCsvImport(event) {
           :value="player.name"
           type="text"
           @input="emit('update-player', player.id, { name: $event.target.value })"
+        />
+        <input
+          :value="player.title"
+          type="text"
+          placeholder="選填"
+          @input="emit('update-player', player.id, { title: $event.target.value })"
         />
         <button
           type="button"
@@ -348,7 +416,7 @@ async function handleCsvImport(event) {
 
         <div class="csv-help-body">
           <p>
-            BattleTree 會讀取 CSV 裡欄位名稱為「姓名」的資料，請先從 Google 表單回覆建立試算表，再下載 CSV。
+            匯入 CSV 後可以自行選擇要用哪個欄位當作選手姓名，請先從 Google 表單回覆建立試算表，再下載 CSV。
           </p>
 
           <ol class="csv-help-steps">
@@ -368,7 +436,88 @@ async function handleCsvImport(event) {
 
           <div class="csv-help-note">
             <strong>注意</strong>
-            <p>CSV 第一列需要有「姓名」欄位；其他欄位例如時間戳記、Email、電話不會被匯入。</p>
+            <p>CSV 第一列要是欄位標題。匯入時會跳出欄位選擇視窗，只有你選擇的欄位會被匯入，其他欄位例如時間戳記、Email、電話都不會使用。</p>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div
+      v-if="showCsvColumnPicker"
+      class="modal-backdrop csv-column-backdrop"
+      @click.self="closeCsvColumnPicker"
+    >
+      <section
+        class="modal-panel compact csv-column-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="csv-column-title"
+      >
+        <header class="modal-header">
+          <h2 id="csv-column-title">選擇姓名欄位</h2>
+          <button type="button" class="icon-button" aria-label="關閉" @click="closeCsvColumnPicker">×</button>
+        </header>
+
+        <div class="csv-column-body">
+          <p>請選擇要當作選手姓名與稱號的欄位，共 {{ csvRows.length }} 筆資料。有稱號的選手，對戰表會以稱號顯示。</p>
+
+          <div class="csv-column-group">
+            <strong class="csv-column-group-label">選手姓名（必選）</strong>
+            <div class="csv-column-list" role="radiogroup" aria-label="姓名欄位">
+              <button
+                v-for="option in csvColumnOptions"
+                :key="option.index"
+                type="button"
+                class="csv-column-option"
+                :class="{ active: csvSelectedColumn === option.index }"
+                role="radio"
+                :aria-checked="csvSelectedColumn === option.index"
+                @click="selectCsvNameColumn(option.index)"
+              >
+                <strong>{{ option.label }}</strong>
+                <span>{{ option.preview }}</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="csv-column-group">
+            <strong class="csv-column-group-label">稱號（可不選）</strong>
+            <div class="csv-column-list" role="radiogroup" aria-label="稱號欄位">
+              <button
+                type="button"
+                class="csv-column-option"
+                :class="{ active: csvSelectedTitleColumn === -1 }"
+                role="radio"
+                :aria-checked="csvSelectedTitleColumn === -1"
+                @click="selectCsvTitleColumn(-1)"
+              >
+                <strong>不使用稱號</strong>
+                <span>對戰表一律顯示選手姓名</span>
+              </button>
+              <button
+                v-for="option in csvColumnOptions"
+                :key="option.index"
+                type="button"
+                class="csv-column-option"
+                :class="{ active: csvSelectedTitleColumn === option.index }"
+                :disabled="csvSelectedColumn === option.index"
+                role="radio"
+                :aria-checked="csvSelectedTitleColumn === option.index"
+                @click="selectCsvTitleColumn(option.index)"
+              >
+                <strong>{{ option.label }}</strong>
+                <span>{{ option.preview }}</span>
+              </button>
+            </div>
+          </div>
+
+          <ul v-if="csvColumnErrors.length" class="error-list">
+            <li v-for="error in csvColumnErrors" :key="error">{{ error }}</li>
+          </ul>
+
+          <div class="csv-column-actions">
+            <button type="button" class="secondary-action" @click="closeCsvColumnPicker">取消</button>
+            <button type="button" class="primary-action" @click="confirmCsvColumn">匯入這個欄位</button>
           </div>
         </div>
       </section>

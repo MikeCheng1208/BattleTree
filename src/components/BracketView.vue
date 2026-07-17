@@ -613,7 +613,7 @@ defineExpose({
           <div class="finals-summary" :class="{ 'has-third-place': thirdPlaceMatch }">
             <div class="champion-strip" :class="{ empty: !champion }">
               <span>榮譽榜</span>
-              <strong>{{ champion?.name ?? '尚未產生' }}</strong>
+              <strong>{{ champion?.displayName ?? '尚未產生' }}</strong>
               <ol v-if="champion" class="podium-list">
                 <li>
                   <span class="podium-icon trophy gold" aria-label="第 1 名">
@@ -626,7 +626,7 @@ defineExpose({
                       <path class="icon-shine" d="M9.5 6.2h4.8" />
                     </svg>
                   </span>
-                  <strong>{{ champion.name }}</strong>
+                  <strong>{{ champion.displayName }}</strong>
                 </li>
                 <li v-if="runnerUp">
                   <span class="podium-icon trophy silver" aria-label="第 2 名">
@@ -639,7 +639,7 @@ defineExpose({
                       <path class="icon-shine" d="M9.5 6.2h4.8" />
                     </svg>
                   </span>
-                  <strong>{{ runnerUp.name }}</strong>
+                  <strong>{{ runnerUp.displayName }}</strong>
                 </li>
                 <li v-if="thirdPlace">
                   <span class="podium-icon trophy bronze" aria-label="第 3 名">
@@ -652,7 +652,7 @@ defineExpose({
                       <path class="icon-shine" d="M9.5 6.2h4.8" />
                     </svg>
                   </span>
-                  <strong>{{ thirdPlace.name }}</strong>
+                  <strong>{{ thirdPlace.displayName }}</strong>
                 </li>
                 <li v-if="fourthPlace">
                   <span class="podium-icon medal" aria-label="第 4 名">
@@ -664,7 +664,7 @@ defineExpose({
                       <path class="icon-mark" d="M12 12.7l.7 1.5 1.7.2-1.2 1.2.3 1.7-1.5-.8-1.5.8.3-1.7-1.2-1.2 1.7-.2.7-1.5Z" />
                     </svg>
                   </span>
-                  <strong>{{ fourthPlace.name }}</strong>
+                  <strong>{{ fourthPlace.displayName }}</strong>
                 </li>
               </ol>
             </div>
@@ -1073,7 +1073,7 @@ defineExpose({
                   @click="toggleManualRepechagePlayer(player.id)"
                 >
                   <span>#{{ player.seed }}</span>
-                  <strong>{{ player.name }}</strong>
+                  <strong>{{ player.displayName }}</strong>
                 </button>
               </div>
 
@@ -1083,7 +1083,7 @@ defineExpose({
                   <span>已建立</span>
                 </div>
                 <div v-for="match in repechageMatches" :key="match.id" class="repechage-pairing-row">
-                  <span>{{ playerMap[match.playerA]?.name }}</span>
+                  <span>{{ playerMap[match.playerA]?.displayName }}</span>
                   <strong>→</strong>
                   <span>第一輪後空位</span>
                 </div>

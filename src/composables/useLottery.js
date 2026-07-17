@@ -101,7 +101,7 @@ export function useLottery(bracketRef, updateLottery) {
       return {
         key: `${id}-${index}`,
         seed: player?.seed ?? '',
-        name: player?.name ?? '',
+        name: player?.displayName ?? player?.name ?? '',
       }
     })
   }

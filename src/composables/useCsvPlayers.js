@@ -1,4 +1,5 @@
 const NAME_COLUMN = '姓名'
+const TITLE_COLUMN = '稱號'
 
 export function parseCsvRows(text) {
   const rows = []
@@ -46,37 +47,51 @@ export function parseCsvRows(text) {
   return rows
 }
 
-export function parseCsvPlayerNames(text, nameColumn = NAME_COLUMN) {
+export function parseCsvTable(text) {
   const normalizedText = text.replace(/^\uFEFF/, '')
   const rows = parseCsvRows(normalizedText)
   const header = rows[0]?.map((cell) => cell.trim()) ?? []
-  const nameIndex = header.indexOf(nameColumn)
 
-  if (nameIndex === -1) {
+  if (!header.length) {
+    return { header: [], rows: [], defaultColumnIndex: -1, defaultTitleColumnIndex: -1, errors: ['CSV 內容是空的'] }
+  }
+
+  const dataRows = rows.slice(1)
+
+  if (!dataRows.length) {
+    return { header, rows: [], defaultColumnIndex: -1, defaultTitleColumnIndex: -1, errors: ['CSV 中沒有可匯入的資料'] }
+  }
+
+  return {
+    header,
+    rows: dataRows,
+    defaultColumnIndex: header.indexOf(NAME_COLUMN),
+    defaultTitleColumnIndex: header.indexOf(TITLE_COLUMN),
+    errors: [],
+  }
+}
+
+export function extractPlayerEntries(rows, nameIndex, titleIndex = -1) {
+  const entries = rows
+    .map((row) => ({
+      name: row[nameIndex]?.trim() ?? '',
+      title: titleIndex >= 0 ? row[titleIndex]?.trim() ?? '' : '',
+    }))
+    .filter((entry) => entry.name)
+
+  if (!entries.length) {
     return {
-      names: [],
-      errors: [`找不到姓名欄位，請確認 CSV 標題為「${nameColumn}」`],
+      entries,
+      errors: ['這個欄位沒有可匯入的姓名'],
     }
   }
 
-  const names = rows
-    .slice(1)
-    .map((row) => row[nameIndex]?.trim() ?? '')
-    .filter(Boolean)
-
-  if (!names.length) {
+  if (entries.length < 2) {
     return {
-      names,
-      errors: ['CSV 中沒有可匯入的姓名'],
-    }
-  }
-
-  if (names.length < 2) {
-    return {
-      names,
+      entries,
       errors: ['至少需要 2 位參賽者'],
     }
   }
 
-  return { names, errors: [] }
+  return { entries, errors: [] }
 }

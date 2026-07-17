@@ -107,7 +107,7 @@ const confettiPieces = Array.from({ length: 60 }, (_, index) => ({
               >
                 <span class="check-mark" aria-hidden="true"></span>
                 <span>#{{ playerMap[id]?.seed }}</span>
-                <strong>{{ playerMap[id]?.name }}</strong>
+                <strong>{{ playerMap[id]?.displayName }}</strong>
               </button>
             </div>
           </section>
@@ -131,7 +131,7 @@ const confettiPieces = Array.from({ length: 60 }, (_, index) => ({
           </div>
           <div>
             <span>狀態</span>
-            <strong v-if="winnerId">抽中 {{ playerMap[winnerId]?.name }}</strong>
+            <strong v-if="winnerId">抽中 {{ playerMap[winnerId]?.displayName }}</strong>
             <strong v-else-if="isRolling">洗牌中</strong>
             <strong v-else>準備抽籤</strong>
           </div>
@@ -154,7 +154,7 @@ const confettiPieces = Array.from({ length: 60 }, (_, index) => ({
 
               <div v-if="displayId" class="draw-focus-card" :class="{ winner: winnerId }">
                 <span>#{{ playerMap[displayId]?.seed }}</span>
-                <strong>{{ playerMap[displayId]?.name }}</strong>
+                <strong>{{ playerMap[displayId]?.displayName }}</strong>
               </div>
 
               <div v-if="winnerId" class="winner-confetti" aria-hidden="true">
@@ -170,7 +170,7 @@ const confettiPieces = Array.from({ length: 60 }, (_, index) => ({
                   :style="{ '--card-index': activePool.indexOf(id), '--card-count': activePool.length }"
                 >
                   <span>#{{ playerMap[id]?.seed }}</span>
-                  <strong>{{ playerMap[id]?.name }}</strong>
+                  <strong>{{ playerMap[id]?.displayName }}</strong>
                 </div>
               </div>
             </div>
@@ -191,7 +191,7 @@ const confettiPieces = Array.from({ length: 60 }, (_, index) => ({
             <ol v-if="drawn.length">
               <li v-for="(id, index) in drawn" :key="id">
                 <span>{{ index + 1 }}</span>
-                <strong>#{{ playerMap[id]?.seed }} {{ playerMap[id]?.name }}</strong>
+                <strong>#{{ playerMap[id]?.seed }} {{ playerMap[id]?.displayName }}</strong>
               </li>
             </ol>
             <p v-else>尚未抽出名單</p>

@@ -83,12 +83,18 @@ function normalizeBracket(bracket) {
   const fallback = createBracket()
   const players =
     Array.isArray(bracket?.players) && bracket.players.length
-      ? bracket.players.map((player, index) => ({
-          id: player.id || createId('player'),
-          name: typeof player.name === 'string' ? player.name : `Player${index + 1}`,
-          seed: Number(player.seed) || index + 1,
-          registrationConfirmed: Boolean(player.registrationConfirmed),
-        }))
+      ? bracket.players.map((player, index) => {
+          const name = typeof player.name === 'string' ? player.name : `Player${index + 1}`
+          const title = typeof player.title === 'string' ? player.title : ''
+          return {
+            id: player.id || createId('player'),
+            name,
+            title,
+            displayName: title.trim() || name,
+            seed: Number(player.seed) || index + 1,
+            registrationConfirmed: Boolean(player.registrationConfirmed),
+          }
+        })
       : fallback.players
   const normalized = {
     ...fallback,
@@ -220,6 +226,7 @@ export function useBrackets() {
           : {
               id: createId('player'),
               name: `Player${index + 1}`,
+              title: '',
               seed: index + 1,
               registrationConfirmed: false,
             }
@@ -249,6 +256,7 @@ export function useBrackets() {
         {
           id: createId('player'),
           name: `Player${(bracket.players?.length ?? 0) + 1}`,
+          title: '',
           seed: Math.max(0, ...(bracket.players ?? []).map((player) => Number(player.seed) || 0)) + 1,
           registrationConfirmed: false,
         },
@@ -272,14 +280,21 @@ export function useBrackets() {
     })
   }
 
-  function importPlayers(names) {
-    const importedNames = names.map((name) => name.trim()).filter(Boolean)
-    if (importedNames.length < 2) return
+  function importPlayers(entries) {
+    const importedEntries = entries
+      .map((entry) =>
+        typeof entry === 'string'
+          ? { name: entry.trim(), title: '' }
+          : { name: (entry?.name ?? '').trim(), title: (entry?.title ?? '').trim() },
+      )
+      .filter((entry) => entry.name)
+    if (importedEntries.length < 2) return
 
     updateCurrent((bracket) => {
-      const players = importedNames.map((name, index) => ({
+      const players = importedEntries.map((entry, index) => ({
         id: createId('player'),
-        name,
+        name: entry.name,
+        title: entry.title,
         seed: index + 1,
         registrationConfirmed: false,
       }))
