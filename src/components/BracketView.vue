@@ -608,6 +608,20 @@ defineExpose({
         </button>
       </div>
 
+      <button
+        type="button"
+        class="next-match-fab"
+        :disabled="!canFocusNext"
+        aria-label="下一場"
+        @click="focusNextMatches"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5 5.8 11.4 12 5 18.2" />
+          <path d="M12.6 5.8 19 12l-6.4 6.2" />
+        </svg>
+        <span class="next-match-fab-tip" aria-hidden="true">下一場</span>
+      </button>
+
       <div ref="contentRef" class="bracket-panzoom-content" :style="transformStyle">
         <section ref="boardRef" class="bracket-board" :class="`view-${viewMode}`">
           <div class="finals-summary" :class="{ 'has-third-place': thirdPlaceMatch }">

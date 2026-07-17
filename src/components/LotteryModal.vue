@@ -48,6 +48,10 @@ const stageClass = computed(() => ({
   revealing: drawPhase.value === 'reveal',
 }))
 const fxClass = computed(() => `phase-${drawPhase.value}`)
+const railHidden = computed(() => drawPhase.value !== 'idle' && drawPhase.value !== 'settled')
+const focusHidden = computed(() =>
+  ['burst', 'swirl', 'converge', 'suspense'].includes(drawPhase.value),
+)
 const showFxLayer = computed(() => drawPhase.value !== 'idle' && drawPhase.value !== 'settled')
 const confettiPieces = Array.from({ length: 60 }, (_, index) => ({
   key: index,
@@ -152,7 +156,7 @@ const confettiPieces = Array.from({ length: 60 }, (_, index) => ({
                 <span></span>
               </div>
 
-              <div v-if="displayId" class="draw-focus-card" :class="{ winner: winnerId }">
+              <div v-if="displayId" class="draw-focus-card" :class="{ winner: winnerId, 'focus-hidden': focusHidden }">
                 <span>#{{ playerMap[displayId]?.seed }}</span>
                 <strong>{{ playerMap[displayId]?.displayName }}</strong>
               </div>
@@ -161,7 +165,7 @@ const confettiPieces = Array.from({ length: 60 }, (_, index) => ({
                 <span v-for="piece in 18" :key="piece"></span>
               </div>
 
-              <div class="lottery-card-rail" aria-label="候選名單">
+              <div class="lottery-card-rail" :class="{ 'rail-hidden': railHidden }" aria-label="候選名單">
                 <div
                   v-for="id in activePool"
                   :key="id"
@@ -206,6 +210,12 @@ const confettiPieces = Array.from({ length: 60 }, (_, index) => ({
       <div class="fx-dim"></div>
       <div class="fx-spotlight fx-spotlight-a"></div>
       <div class="fx-spotlight fx-spotlight-b"></div>
+      <div class="fx-vortex">
+        <span class="fx-vortex-ring ring-a"></span>
+        <span class="fx-vortex-ring ring-b"></span>
+        <span class="fx-vortex-ring ring-c"></span>
+        <span class="fx-vortex-core"></span>
+      </div>
       <div v-for="card in flyingCards" :key="card.key" ref="flyCardEls" class="fx-fly-card">
         <span>#{{ card.seed }}</span>
         <strong>{{ card.name }}</strong>

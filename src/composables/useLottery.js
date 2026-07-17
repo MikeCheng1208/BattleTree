@@ -94,7 +94,7 @@ export function useLottery(bracketRef, updateLottery) {
       const j = Math.floor(Math.random() * (i + 1))
       ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
     }
-    const count = shuffled.length >= 10 ? Math.min(14, shuffled.length) : 10
+    const count = Math.min(24, Math.max(14, shuffled.length * 2))
     return Array.from({ length: count }, (_, index) => {
       const id = shuffled[index % shuffled.length]
       const player = playerMap.value[id]
@@ -183,7 +183,7 @@ export function useLottery(bracketRef, updateLottery) {
       })
       timeline.to(progress, {
         value: fastEnd,
-        duration: 2.1,
+        duration: 2.2,
         ease: 'none',
         onUpdate: syncHighlight,
       })
@@ -192,29 +192,39 @@ export function useLottery(bracketRef, updateLottery) {
       })
       timeline.to(progress, {
         value: decoyTarget,
-        duration: 1.4,
+        duration: 1.5,
         ease: 'power3.out',
         onUpdate: syncHighlight,
       })
+      // 倒數 3、2、1 等節奏（每 0.75 秒一拍），最後一拍結束的瞬間剛好吸入完成並開牌
       timeline.call(
         () => {
           countdown.value = 3
         },
         null,
-        3.1,
+        3.35,
       )
       timeline.call(
         () => {
           countdown.value = 2
         },
         null,
-        3.9,
+        4.1,
       )
-      timeline.call(() => {
-        drawPhase.value = 'suspense'
-        countdown.value = 1
-      })
-      timeline.to({}, { duration: 0.35 })
+      timeline.call(
+        () => {
+          drawPhase.value = 'suspense'
+        },
+        null,
+        4.6,
+      )
+      timeline.call(
+        () => {
+          countdown.value = 1
+        },
+        null,
+        4.85,
+      )
       for (let hop = 1; hop <= decoySteps; hop += 1) {
         const hopId = pool[(decoyIndex + hop) % pool.length]
         timeline.call(
@@ -222,7 +232,7 @@ export function useLottery(bracketRef, updateLottery) {
             currentHighlightId.value = hopId
           },
           null,
-          '+=0.18',
+          4.95 + hop * 0.18,
         )
       }
       timeline.call(
@@ -232,9 +242,10 @@ export function useLottery(bracketRef, updateLottery) {
           commitDraw()
         },
         null,
-        '+=0.27',
+        5.6,
       )
-      timeline.to({}, { duration: 1.5 })
+      // 補足停留時間，讓整段抽獎動畫總長固定為 7 秒
+      timeline.to({}, { duration: Math.max(0.9, 7 - timeline.duration()) })
     })
 
     drawPhase.value = 'settled'
