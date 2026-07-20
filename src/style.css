@@ -2157,6 +2157,102 @@ input {
   justify-self: start;
 }
 
+.final-three-stage-shell {
+  position: relative;
+  z-index: 1;
+  width: 720px;
+  margin: 0 auto 30px;
+}
+
+.final-three-stage-shell.focus-pulse .final-three-card {
+  animation: focus-pulse-ring 0.85s ease-out 2;
+}
+
+.final-three-card {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  background: var(--surface-strong);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.1);
+}
+
+.final-three-header {
+  display: flex;
+  gap: 18px;
+  align-items: end;
+  justify-content: space-between;
+}
+
+.final-three-header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.final-three-header span {
+  color: var(--gold);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.final-three-header h2,
+.final-three-standings-wrap h3 {
+  margin: 0;
+  color: var(--text);
+  font-weight: 950;
+}
+
+.final-three-header h2 {
+  font-size: 19px;
+}
+
+.final-three-header p,
+.final-three-rule {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.final-three-header p {
+  max-width: 340px;
+  text-align: right;
+}
+
+.final-three-layout,
+.final-three-standings-wrap {
+  display: grid;
+  gap: 12px;
+}
+
+.final-three-matches {
+  display: grid;
+  grid-template-columns: repeat(3, var(--match-width));
+  gap: 12px;
+  justify-content: center;
+}
+
+.final-three-standings-wrap h3 {
+  font-size: 14px;
+}
+
+.final-three-standings tr.ranking-complete td {
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.final-three-placeholder {
+  height: 48px;
+  color: var(--muted) !important;
+}
+
+.final-three-rule {
+  line-height: 1.55;
+}
+
 .champion-strip {
   width: 280px;
   margin: 0;

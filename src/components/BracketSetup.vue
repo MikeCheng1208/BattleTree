@@ -8,6 +8,7 @@ import { extractPlayerEntries, parseCsvTable } from '../composables/useCsvPlayer
 import {
   FREE_SLOT_COUNT_OPTIONS,
   getFirstRoundPreview,
+  isFinalThreeSlotCount,
   normalizeFreeSlotCount,
   validatePlayers,
 } from '../composables/useBracketEngine'
@@ -94,9 +95,10 @@ const firstRoundPreviewText = computed(() => {
     if (total > 64) return `自由編排最多 64 格，目前 ${total} 人超出上限，請減少參賽人數`
     const slotCount = effectiveFreeSlotCount.value
     const emptyCount = slotCount - total
+    const finalRule = isFinalThreeSlotCount(slotCount) ? '；淘汰至三強後進行循環賽排名' : ''
     return emptyCount
-      ? `${total} 人排入 ${slotCount} 格：${emptyCount} 格空位待填（可於對戰頁填人、確認輪空，或讓第一輪敗者再戰）`
-      : `${total} 人剛好填滿 ${slotCount} 格，無空位`
+      ? `${total} 人排入 ${slotCount} 格：${emptyCount} 格空位待填（可於對戰頁填人、確認輪空，或讓第一輪敗者再戰）${finalRule}`
+      : `${total} 人剛好填滿 ${slotCount} 格，無空位${finalRule}`
   }
   const { slotCount, groups } = getFirstRoundPreview(total, props.bracket.groupCount)
   if (groups.length === 1) {
@@ -272,7 +274,8 @@ function closeCsvColumnPicker() {
           </button>
         </div>
         <p class="format-settings-hint">
-          名單先排入且左右平均分佈；空格待填的對戰顯示「待定」，可於對戰頁填人或確認輪空。
+          名單先排入且平均分佈；24／48 格會淘汰至三強後進行循環排名，其他格數維持標準淘汰賽。
+          空格待填的對戰顯示「待定」，可於對戰頁填人或確認輪空。
         </p>
       </template>
       <template v-else>

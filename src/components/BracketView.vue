@@ -1,14 +1,18 @@
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useResizeObserver } from '@vueuse/core'
+import FinalThreeStage from './FinalThreeStage.vue'
 import MatchCard from './MatchCard.vue'
 import SlotEditor from './SlotEditor.vue'
 import {
   deriveRounds,
   getBracketGroups,
+  getFinalThreeMatches,
+  getFinalThreeStandings,
   getFirstRoundState,
   getPlayerMap,
   getPodium,
+  isFinalThreeComplete,
   sanitizeResults,
   THIRD_PLACE_MATCH_ID,
 } from '../composables/useBracketEngine'
@@ -53,6 +57,10 @@ const activeGroupTab = ref('group-0')
 const slotEditorIndex = ref(null)
 
 const rounds = computed(() => deriveRounds(props.bracket))
+const finalThreeMatches = computed(() => getFinalThreeMatches(props.bracket))
+const finalThreeStandings = computed(() => getFinalThreeStandings(props.bracket))
+const finalThreeComplete = computed(() => isFinalThreeComplete(props.bracket))
+const hasFinalThreeStage = computed(() => finalThreeMatches.value.length === 3)
 const displayRounds = computed(() => (viewMode.value === 'ladder' ? [...rounds.value].reverse() : rounds.value))
 const baseMatchCount = computed(() => Math.max(1, rounds.value[0]?.length ?? 1))
 const halfMatchCount = computed(() => Math.max(1, baseMatchCount.value / 2))
@@ -77,7 +85,9 @@ const bracketGroups = computed(() => getBracketGroups(props.bracket))
 const availableViewModes = computed(() =>
   VIEW_MODES.filter((mode) => {
     if (mode.value === 'groups') return bracketGroups.value.length > 1
-    if (mode.value === 'mirror') return bracketGroups.value.length <= 1 && baseMatchCount.value >= 2
+    if (mode.value === 'mirror') {
+      return !hasFinalThreeStage.value && bracketGroups.value.length <= 1 && baseMatchCount.value >= 2
+    }
     return true
   }),
 )
@@ -91,6 +101,7 @@ const thirdPlaceMatch = computed(() => podium.value.thirdPlaceMatch)
 const firstRoundState = computed(() => getFirstRoundState(props.bracket))
 const upcomingMatches = computed(() => {
   const list = rounds.value.flat().filter((match) => match.isPlayable && !match.winnerId)
+  list.push(...finalThreeMatches.value.filter((match) => match.isPlayable && !match.winnerId))
   const third = thirdPlaceMatch.value
   if (third && !third.winnerId) list.push(third)
   return list
@@ -183,6 +194,11 @@ const {
 
 function setMatchRef(id, element) {
   if (element) matchRefs.value[id] = element
+}
+
+function setFinalThreeStageRef(element) {
+  if (!element) return
+  finalThreeMatches.value.forEach((match) => setMatchRef(match.id, element))
 }
 
 function getMatchGridStyle(roundLength, matchIndex) {
@@ -678,6 +694,22 @@ defineExpose({
               />
             </section>
           </div>
+
+          <section
+            v-if="hasFinalThreeStage"
+            :ref="setFinalThreeStageRef"
+            class="final-three-stage-shell"
+            :class="{ 'focus-pulse': finalThreeMatches.some((match) => focusedMatchIds.includes(match.id)) }"
+          >
+            <FinalThreeStage
+              :matches="finalThreeMatches"
+              :standings="finalThreeStandings"
+              :player-map="playerMap"
+              :complete="finalThreeComplete"
+              @set-result="(...args) => emit('set-result', ...args)"
+              @update-score="(...args) => emit('update-score', ...args)"
+            />
+          </section>
 
           <svg class="connector-layer" aria-hidden="true">
             <polyline

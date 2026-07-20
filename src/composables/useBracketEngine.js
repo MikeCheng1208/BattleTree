@@ -1,10 +1,22 @@
+import { getRoundRobinStandings } from './useRoundRobinStandings.js'
+
 export function createId(prefix = 'id') {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
 export const THIRD_PLACE_MATCH_ID = 'third-place'
-export const FREE_SLOT_COUNT_OPTIONS = [8, 16, 32, 64]
+export const FINAL_THREE_MATCH_PREFIX = 'final-three'
+export const FREE_SLOT_COUNT_OPTIONS = [8, 16, 24, 32, 48, 64]
+const FINAL_THREE_SLOT_COUNTS = new Set([24, 48])
+
+export function isFinalThreeSlotCount(slotCount) {
+  return FINAL_THREE_SLOT_COUNTS.has(Number(slotCount))
+}
+
+export function isFinalThreeBracket(bracket) {
+  return bracket?.format === 'free' && isFinalThreeSlotCount(bracket?.slots?.length)
+}
 
 export function getBracketSize(count) {
   if (count <= 2) return 2
@@ -17,6 +29,22 @@ export function getSeedOrder(size) {
     const pair = [seed, size + 1 - seed]
     return index % 2 === 0 ? pair : pair.reverse()
   })
+}
+
+export function getFreeSeedOrder(size) {
+  if (!isFinalThreeSlotCount(size)) return getSeedOrder(size)
+
+  const branchSize = size / 3
+  const branchSeeds = Array.from({ length: 3 }, () => [])
+  for (let seed = 1; seed <= size; seed += 1) {
+    const row = Math.floor((seed - 1) / 3)
+    const offset = (seed - 1) % 3
+    const branchIndex = row % 2 === 0 ? offset : 2 - offset
+    branchSeeds[branchIndex].push(seed)
+  }
+
+  const branchOrder = getSeedOrder(branchSize)
+  return branchSeeds.flatMap((seeds) => branchOrder.map((rank) => seeds[rank - 1]))
 }
 
 export function shufflePlayers(players) {
@@ -57,7 +85,8 @@ export function normalizeFreeSlotCount(count, playerCount = 0) {
 
 export function createFreeSlots(players, pairingMode = 'order', slotCount) {
   const orderedPlayers = pairingMode === 'random' ? shufflePlayers(players) : sortPlayersBySeed(players)
-  return { bracketSize: slotCount, slots: createSeededSlots(orderedPlayers, slotCount) }
+  const slots = getFreeSeedOrder(slotCount).map((rank) => orderedPlayers[rank - 1]?.id ?? null)
+  return { bracketSize: slotCount, slots }
 }
 
 export function validatePlayers(players) {
@@ -302,6 +331,7 @@ export function deriveRounds(bracket) {
   let roundIndex = 0
 
   while (currentSlots.length >= 2) {
+    if (isFinalThreeBracket(bracket) && currentSlots.length === 3) break
     const matches = []
     const nextSlots = []
     const currentWinners = new Map()
@@ -367,6 +397,68 @@ export function deriveRounds(bracket) {
   return rounds
 }
 
+export function getFinalThreeMatches(bracket) {
+  if (!isFinalThreeBracket(bracket)) return []
+  const rounds = deriveRounds(bracket)
+  const finalistMatches = rounds[rounds.length - 1] ?? []
+  if (finalistMatches.length !== 3) return []
+
+  const finalists = finalistMatches.map((match) => match.winnerId ?? null)
+  const pairIndexes = [
+    [0, 1],
+    [1, 2],
+    [2, 0],
+  ]
+  return pairIndexes.map(([indexA, indexB], matchIndex) => {
+    const id = `${FINAL_THREE_MATCH_PREFIX}-m${matchIndex}`
+    const playerA = finalists[indexA]
+    const playerB = finalists[indexB]
+    const result = bracket?.results?.[id] ?? null
+    const isWaiting = !playerA || !playerB
+    const isPlayable = Boolean(playerA && playerB)
+    return {
+      id,
+      roundIndex: rounds.length,
+      matchIndex,
+      slotA: { fromMatchId: finalistMatches[indexA].id },
+      slotB: { fromMatchId: finalistMatches[indexB].id },
+      playerA,
+      playerB,
+      winnerId: isPlayable ? getManualWinner({ playerA, playerB }, result) : null,
+      isBye: false,
+      isEmpty: false,
+      isWaiting,
+      isAwaitingEntry: false,
+      isPlayable,
+      isFinalThree: true,
+      result,
+    }
+  })
+}
+
+export function getFinalThreeStandings(bracket) {
+  const matches = getFinalThreeMatches(bracket)
+  const finalistIds = [...new Set(matches.flatMap((match) => [match.playerA, match.playerB]).filter(Boolean))]
+  if (finalistIds.length !== 3) return []
+  return getRoundRobinStandings(finalistIds, matches, bracket?.players ?? [])
+}
+
+export function isFinalThreeComplete(bracket) {
+  const matches = getFinalThreeMatches(bracket)
+  if (matches.length !== 3 || !matches.every((match) => match.winnerId)) return false
+
+  const winCounts = new Map()
+  matches.forEach((match) => winCounts.set(match.winnerId, (winCounts.get(match.winnerId) ?? 0) + 1))
+  const isThreeWayTie = winCounts.size === 3 && [...winCounts.values()].every((wins) => wins === 1)
+  if (!isThreeWayTie) return true
+
+  return matches.every((match) => {
+    const scoreA = match.result?.scoreA
+    const scoreB = match.result?.scoreB
+    return scoreA !== null && scoreA !== undefined && scoreB !== null && scoreB !== undefined
+  })
+}
+
 export function getFirstRoundState(bracket) {
   const firstRound = deriveRounds(bracket)[0] ?? []
   const playableMatches = firstRound.filter((match) => match.isPlayable || match.result)
@@ -381,12 +473,16 @@ export function getFirstRoundState(bracket) {
 }
 
 export function getChampionId(bracket) {
+  if (isFinalThreeBracket(bracket)) {
+    return isFinalThreeComplete(bracket) ? (getFinalThreeStandings(bracket)[0]?.playerId ?? null) : null
+  }
   const rounds = deriveRounds(bracket)
   const finalRound = rounds[rounds.length - 1]
   return finalRound?.[0]?.winnerId ?? null
 }
 
 export function getThirdPlaceMatch(bracket) {
+  if (isFinalThreeBracket(bracket)) return null
   const rounds = deriveRounds(bracket)
   if (rounds.length < 2) return null
 
@@ -436,6 +532,19 @@ export function getThirdPlaceMatch(bracket) {
 }
 
 export function getPodium(bracket) {
+  if (isFinalThreeBracket(bracket)) {
+    const complete = isFinalThreeComplete(bracket)
+    const standings = complete ? getFinalThreeStandings(bracket) : []
+    return {
+      championId: standings[0]?.playerId ?? null,
+      runnerUpId: standings[1]?.playerId ?? null,
+      thirdPlaceId: standings[2]?.playerId ?? null,
+      fourthPlaceId: null,
+      thirdPlaceMatch: null,
+      isFinalThree: true,
+    }
+  }
+
   const rounds = deriveRounds(bracket)
   const finalMatch = rounds[rounds.length - 1]?.[0]
   const thirdPlaceMatch = getThirdPlaceMatch(bracket)
@@ -455,6 +564,7 @@ export function getPodium(bracket) {
     thirdPlaceId,
     fourthPlaceId,
     thirdPlaceMatch,
+    isFinalThree: false,
   }
 }
 
@@ -463,6 +573,19 @@ export function sanitizeResults(bracket) {
   const validResults = {}
 
   rounds.flat().forEach((match) => {
+    const result = bracket.results?.[match.id]
+    if (!result || !match.isPlayable) return
+    const winnerId = result.winnerSlot === 0 ? match.playerA : match.playerB
+    if (winnerId) {
+      validResults[match.id] = {
+        winnerSlot: result.winnerSlot,
+        scoreA: result.scoreA ?? null,
+        scoreB: result.scoreB ?? null,
+      }
+    }
+  })
+
+  getFinalThreeMatches(bracket).forEach((match) => {
     const result = bracket.results?.[match.id]
     if (!result || !match.isPlayable) return
     const winnerId = result.winnerSlot === 0 ? match.playerA : match.playerB

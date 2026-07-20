@@ -7,6 +7,7 @@ import {
   createGroupedSlots,
   createId,
   deriveRounds,
+  FINAL_THREE_MATCH_PREFIX,
   FREE_SLOT_COUNT_OPTIONS,
   getFirstRoundState,
   getGroupLabel,
@@ -560,7 +561,7 @@ export function useBrackets() {
     if (!bracket) return { ok: false, errors: ['找不到目前對戰表'] }
     const requested = Number(count)
     if (!FREE_SLOT_COUNT_OPTIONS.includes(requested)) {
-      return { ok: false, errors: ['對戰格數僅支援 8／16／32／64'] }
+      return { ok: false, errors: ['對戰格數僅支援 8／16／24／32／48／64'] }
     }
     if (bracket.players.length > requested) {
       return {
@@ -844,17 +845,21 @@ export function useBrackets() {
     updateCurrent((bracket) => {
       const current = bracket.results?.[matchId]
       const isThirdPlaceMatch = matchId === THIRD_PLACE_MATCH_ID
+      const isFinalThreeMatch = matchId.startsWith(`${FINAL_THREE_MATCH_PREFIX}-`)
       const changedRoundMatch = /^r(\d+)-m\d+$/.exec(matchId)
       const changedRound = changedRoundMatch ? Number(changedRoundMatch[1]) : null
       const finalRoundIndex = deriveRounds(bracket).length - 1
-      const nextResults = Object.fromEntries(
-        Object.entries(bracket.results ?? {}).filter(([id]) => {
-          if (isThirdPlaceMatch) return true
-          if (id === THIRD_PLACE_MATCH_ID) return changedRound >= finalRoundIndex
-          const round = Number(/^r(\d+)-m\d+$/.exec(id)?.[1] ?? 0)
-          return round <= changedRound
-        }),
-      )
+      const nextResults = isFinalThreeMatch
+        ? { ...(bracket.results ?? {}) }
+        : Object.fromEntries(
+            Object.entries(bracket.results ?? {}).filter(([id]) => {
+              if (id.startsWith(`${FINAL_THREE_MATCH_PREFIX}-`)) return false
+              if (isThirdPlaceMatch) return true
+              if (id === THIRD_PLACE_MATCH_ID) return changedRound >= finalRoundIndex
+              const round = Number(/^r(\d+)-m\d+$/.exec(id)?.[1] ?? 0)
+              return round <= changedRound
+            }),
+          )
       if (current?.winnerSlot === winnerSlot) {
         delete nextResults[matchId]
       } else {

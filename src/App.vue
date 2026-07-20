@@ -108,16 +108,26 @@ const resultRows = computed(() => {
   const result = podium.value
   if (!bracket || !result) return []
   const playerMap = Object.fromEntries((bracket.players ?? []).map((player) => [player.id, player]))
-  return [
+  const rows = [
     { rank: 1, label: '第一名', className: 'gold', player: playerMap[result.championId] },
     { rank: 2, label: '第二名', className: 'silver', player: playerMap[result.runnerUpId] },
     { rank: 3, label: '第三名', className: 'bronze', player: playerMap[result.thirdPlaceId] },
-    { rank: 4, label: '第四名', className: 'medal', player: playerMap[result.fourthPlaceId] },
   ]
+  if (!result.isFinalThree) {
+    rows.push({ rank: 4, label: '第四名', className: 'medal', player: playerMap[result.fourthPlaceId] })
+  }
+  return rows
 })
 const resultCompletionKey = computed(() => {
   const rows = resultRows.value
-  if (currentBracket.value?.status !== 'ready' || rows.length !== 4 || rows.some((row) => !row.player)) return ''
+  const expectedCount = podium.value?.isFinalThree ? 3 : 4
+  if (
+    currentBracket.value?.status !== 'ready' ||
+    rows.length !== expectedCount ||
+    rows.some((row) => !row.player)
+  ) {
+    return ''
+  }
   return `${currentBracket.value.id}:${rows.map((row) => row.player.id).join('|')}`
 })
 const shellStyle = computed(() => ({
