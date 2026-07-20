@@ -2,15 +2,13 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useResizeObserver } from '@vueuse/core'
 import MatchCard from './MatchCard.vue'
+import SlotEditor from './SlotEditor.vue'
 import {
-  analyzeRepechageInsertionTargets,
   deriveRounds,
   getBracketGroups,
   getFirstRoundState,
   getPlayerMap,
   getPodium,
-  getRepechageMatches,
-  REPECHAGE_MATCH_PREFIX,
   sanitizeResults,
   THIRD_PLACE_MATCH_ID,
 } from '../composables/useBracketEngine'
@@ -28,15 +26,20 @@ const props = defineProps({
     type: Object,
     required: true,
   },
+  initialViewState: Object,
 })
 
 const emit = defineEmits([
   'set-result',
   'update-score',
   'reshuffle',
-  'configure-repechage',
-  'apply-repechage-settings',
-  'reset-repechage',
+  'fill-free-slot',
+  'add-free-player',
+  'clear-free-slot',
+  'confirm-free-bye',
+  'revoke-free-bye',
+  'random-fill-free-slots',
+  'confirm-all-byes',
 ])
 
 const viewportRef = ref(null)
@@ -47,12 +50,7 @@ const lines = ref([])
 const scoreLabels = ref([])
 const viewMode = ref('ladder')
 const activeGroupTab = ref('group-0')
-const showRepechageManager = ref(false)
-const showRepechagePrompt = ref(false)
-const dismissedRepechagePromptKey = ref('')
-const manualRepechageSelection = ref([])
-const draftSelectionMode = ref('random')
-const draftEntryCount = ref(2)
+const slotEditorIndex = ref(null)
 
 const rounds = computed(() => deriveRounds(props.bracket))
 const displayRounds = computed(() => (viewMode.value === 'ladder' ? [...rounds.value].reverse() : rounds.value))
@@ -91,8 +89,6 @@ const thirdPlace = computed(() => playerMap.value[podium.value.thirdPlaceId] ?? 
 const fourthPlace = computed(() => playerMap.value[podium.value.fourthPlaceId] ?? null)
 const thirdPlaceMatch = computed(() => podium.value.thirdPlaceMatch)
 const firstRoundState = computed(() => getFirstRoundState(props.bracket))
-// 敗部復活場次目前皆為直接安插（isEntry、不可對打），復活者已含在主樹 target 場內；
-// 若未來出現可對打的復活賽，需另外納入 upcoming。
 const upcomingMatches = computed(() => {
   const list = rounds.value.flat().filter((match) => match.isPlayable && !match.winnerId)
   const third = thirdPlaceMatch.value
@@ -102,67 +98,35 @@ const upcomingMatches = computed(() => {
 const canFocusNext = computed(() => upcomingMatches.value.length > 0)
 const focusedMatchIds = ref([])
 let focusPulseTimer = null
-const repechageTargets = computed(() => props.bracket.repechage?.targets ?? [])
-const repechageMatches = computed(() => getRepechageMatches(props.bracket))
-const repechageRequiredPlayerCount = computed(() => repechageTargets.value.length)
-const repechageSelectionMode = computed(() => props.bracket.repechage?.selectionMode ?? 'random')
-const repechageStarted = computed(
-  () =>
-    repechageMatches.value.some((match) => Boolean(match.result)) ||
-    repechageTargets.value.some((target) =>
-      Boolean(props.bracket.results?.[`r${target.targetRoundIndex}-m${target.targetMatchIndex}`]),
-    ),
+const isFree = computed(() => props.bracket.format === 'free')
+const byeSet = computed(() => new Set(props.bracket.byeSlots ?? []))
+const awaitingSlotIndexes = computed(() =>
+  isFree.value
+    ? props.bracket.slots.flatMap((slot, index) => (slot === null && !byeSet.value.has(index) ? [index] : []))
+    : [],
 )
-const repechageReady = computed(() => repechageMatches.value.length === repechageTargets.value.length)
-const repechagePromptKey = computed(() => {
-  if (!props.bracket.repechage?.enabled || !repechageTargets.value.length) return ''
-  if (!firstRoundState.value.complete || repechageReady.value) return ''
-  return `${props.bracket.id}:${repechageTargets.value.map((target) => target.id).join('|')}:${firstRoundState.value.loserIds.join('|')}`
+const assignedIdCounts = computed(() => {
+  const counts = new Map()
+  props.bracket.slots.forEach((id) => {
+    if (typeof id === 'string') counts.set(id, (counts.get(id) ?? 0) + 1)
+  })
+  return counts
 })
-const repechageStatusText = computed(() => {
-  if (!props.bracket.repechage?.enabled) return ''
-  if (!repechageTargets.value.length) return '本賽程無需敗部復活'
-  if (!firstRoundState.value.complete) {
-    return `第一輪 ${firstRoundState.value.completed} / ${firstRoundState.value.total}`
-  }
-  if (!repechageReady.value) return '設定敗部復活'
-  if (!repechageStarted.value) return '敗部復活已安插'
-  return '敗部復活進行中'
-})
-const repechageCandidates = computed(() =>
-  firstRoundState.value.loserIds.map((id) => playerMap.value[id]).filter(Boolean),
+const unassignedPlayers = computed(() =>
+  props.bracket.players.filter((player) => !assignedIdCounts.value.has(player.id)),
 )
-const repechageMatchByTarget = computed(() =>
-  Object.fromEntries(repechageMatches.value.map((match) => [match.targetId, match])),
+const loserCandidates = computed(() =>
+  firstRoundState.value.loserIds
+    .filter((id) => (assignedIdCounts.value.get(id) ?? 0) < 2)
+    .map((id) => playerMap.value[id])
+    .filter(Boolean),
 )
-const availableInsertionTargets = computed(() =>
-  analyzeRepechageInsertionTargets(props.bracket.slots, props.bracket.groupCount),
+const slotEditorPlayer = computed(() =>
+  slotEditorIndex.value === null ? null : (playerMap.value[props.bracket.slots[slotEditorIndex.value]] ?? null),
 )
-const maxRepechageEntryCount = computed(() => availableInsertionTargets.value.length)
-const repechageSettingsLocked = computed(
-  () => repechageStarted.value || repechageMatches.value.length > 0,
+const slotEditorIsConfirmedBye = computed(
+  () => slotEditorIndex.value !== null && byeSet.value.has(slotEditorIndex.value),
 )
-const clampedDraftEntryCount = computed(() =>
-  Math.min(Math.max(1, Number(draftEntryCount.value) || 1), Math.max(1, maxRepechageEntryCount.value)),
-)
-const draftAffectedResultCount = computed(() => {
-  if (!maxRepechageEntryCount.value) return 0
-  const candidate = {
-    ...props.bracket,
-    repechage: {
-      ...props.bracket.repechage,
-      enabled: true,
-      entryCount: clampedDraftEntryCount.value,
-      targets: availableInsertionTargets.value.slice(0, clampedDraftEntryCount.value),
-      selectedPlayerIds: [],
-      matches: [],
-    },
-  }
-  const sanitized = sanitizeResults(candidate)
-  return Object.keys(props.bracket.results ?? {}).filter(
-    (id) => !id.startsWith(REPECHAGE_MATCH_PREFIX) && !sanitized[id],
-  ).length
-})
 const groupRoundCount = computed(() => {
   const firstGroup = bracketGroups.value[0]
   return firstGroup ? Math.log2(firstGroup.slotCount) : 0
@@ -207,6 +171,8 @@ const {
   zoomIn,
   zoomOut,
   resetView,
+  getViewState: getPanZoomViewState,
+  restoreViewState: restorePanZoomViewState,
   fitToView,
   focusRect,
   onPointerDown,
@@ -254,67 +220,91 @@ function getFinalMatchGridStyle(roundLength, matchIndex) {
   }
 }
 
-function getRepechageMatchForMatch(match) {
-  const target = repechageTargets.value.find(
-    (item) => item.targetRoundIndex === match.roundIndex && item.targetMatchIndex === match.matchIndex,
-  )
-  const repechageMatch = target ? repechageMatchByTarget.value[target.id] : null
-  return repechageMatch?.isEntry ? null : repechageMatch
+function openSlotEditor(slotIndex) {
+  if (!isFree.value) return
+  slotEditorIndex.value = slotIndex
 }
 
-function toggleManualRepechagePlayer(playerId) {
-  if (manualRepechageSelection.value.includes(playerId)) {
-    manualRepechageSelection.value = manualRepechageSelection.value.filter((id) => id !== playerId)
-    return
+function closeSlotEditor() {
+  slotEditorIndex.value = null
+}
+
+function countClearedResults(candidateBracket) {
+  const sanitized = sanitizeResults(candidateBracket)
+  return Object.keys(props.bracket.results ?? {}).filter((id) => !sanitized[id]).length
+}
+
+function buildSlotCandidate(slotIndex, playerId) {
+  const slots = [...props.bracket.slots]
+  const hadPlayer = slots[slotIndex] !== null
+  slots[slotIndex] = playerId
+  const results = { ...props.bracket.results }
+  if (hadPlayer || playerId === null) delete results[`r0-m${Math.floor(slotIndex / 2)}`]
+  return {
+    ...props.bracket,
+    slots,
+    results,
+    byeSlots: (props.bracket.byeSlots ?? []).filter((index) => index !== slotIndex),
   }
-  if (manualRepechageSelection.value.length >= repechageRequiredPlayerCount.value) return
-  manualRepechageSelection.value = [...manualRepechageSelection.value, playerId]
 }
 
-function configureRepechage() {
-  emit(
-    'configure-repechage',
-    repechageSelectionMode.value === 'manual' ? manualRepechageSelection.value : null,
-  )
-  dismissedRepechagePromptKey.value = repechagePromptKey.value
-  showRepechagePrompt.value = false
-  showRepechageManager.value = false
+function confirmSlotChange(candidateBracket, actionLabel) {
+  const cleared = countClearedResults(candidateBracket)
+  if (!cleared) return true
+  return confirm(`${actionLabel}將清除 ${cleared} 場已完成場次的成績，確定繼續？`)
 }
 
-function onDraftEntryCountChange(event) {
-  draftEntryCount.value = event.target.value
-  event.target.value = String(clampedDraftEntryCount.value)
+function handleSlotFill(playerId) {
+  const index = slotEditorIndex.value
+  if (index === null) return
+  if (!confirmSlotChange(buildSlotCandidate(index, playerId), '更換這個格位的選手')) return
+  emit('fill-free-slot', index, playerId)
+  closeSlotEditor()
 }
 
-function applyRepechageSettings(enabled) {
-  if (enabled && draftAffectedResultCount.value > 0) {
-    const confirmed = confirm(
-      `啟用敗部復活將清除 ${draftAffectedResultCount.value} 場已完成場次的成績，確定繼續？`,
-    )
-    if (!confirmed) return
+function handleSlotCreate(payload) {
+  const index = slotEditorIndex.value
+  if (index === null) return
+  if (!confirmSlotChange(buildSlotCandidate(index, '__pending__'), '更換這個格位的選手')) return
+  emit('add-free-player', index, payload)
+  closeSlotEditor()
+}
+
+function handleSlotClear() {
+  const index = slotEditorIndex.value
+  if (index === null) return
+  if (!confirmSlotChange(buildSlotCandidate(index, null), '清空這個格位')) return
+  emit('clear-free-slot', index)
+  closeSlotEditor()
+}
+
+function handleSlotConfirmBye() {
+  const index = slotEditorIndex.value
+  if (index === null) return
+  emit('confirm-free-bye', index)
+  closeSlotEditor()
+}
+
+function handleSlotRevokeBye() {
+  const index = slotEditorIndex.value
+  if (index === null) return
+  const candidate = {
+    ...props.bracket,
+    byeSlots: (props.bracket.byeSlots ?? []).filter((item) => item !== index),
   }
-  emit('apply-repechage-settings', {
-    enabled,
-    selectionMode: draftSelectionMode.value,
-    entryCount: clampedDraftEntryCount.value,
-  })
+  if (!confirmSlotChange(candidate, '取消輪空')) return
+  emit('revoke-free-bye', index)
+  closeSlotEditor()
 }
 
-function openRepechageManagerFromPrompt() {
-  dismissedRepechagePromptKey.value = repechagePromptKey.value
-  showRepechagePrompt.value = false
-  showRepechageManager.value = true
+function handleRandomFill() {
+  emit('random-fill-free-slots')
 }
 
-function dismissRepechagePrompt() {
-  dismissedRepechagePromptKey.value = repechagePromptKey.value
-  showRepechagePrompt.value = false
-}
-
-function resetRepechage() {
-  if (repechageStarted.value) return
-  manualRepechageSelection.value = []
-  emit('reset-repechage')
+function handleConfirmAllByes() {
+  if (!confirm(`確定將剩餘 ${awaitingSlotIndexes.value.length} 個待定格全部視為輪空？對手將自動晉級。`)) return
+  emit('confirm-all-byes')
+  closeSlotEditor()
 }
 
 async function setViewMode(mode) {
@@ -491,39 +481,6 @@ async function updateLines() {
 }
 
 watch(rounds, updateLines, { deep: true, flush: 'post' })
-watch(
-  () => props.bracket.id,
-  () => {
-    showRepechageManager.value = false
-    showRepechagePrompt.value = false
-    dismissedRepechagePromptKey.value = ''
-    manualRepechageSelection.value = []
-  },
-)
-watch(
-  repechagePromptKey,
-  (key) => {
-    if (showRepechageManager.value) return
-    if (!key || key === dismissedRepechagePromptKey.value) {
-      showRepechagePrompt.value = false
-      return
-    }
-    showRepechagePrompt.value = true
-  },
-  { immediate: true },
-)
-watch(showRepechageManager, (open) => {
-  if (!open) return
-  draftSelectionMode.value = repechageSelectionMode.value
-  draftEntryCount.value = props.bracket.repechage?.entryCount ?? 2
-})
-watch(
-  () => props.bracket.repechage?.selectedPlayerIds,
-  (ids) => {
-    manualRepechageSelection.value = Array.isArray(ids) ? [...ids] : []
-  },
-  { deep: true },
-)
 watch(viewMode, updateLines, { flush: 'post' })
 watch(bracketGroups, (groups) => {
   if (viewMode.value === 'groups' && groups.length <= 1) viewMode.value = 'ladder'
@@ -533,7 +490,7 @@ watch(bracketGroups, (groups) => {
   }
 })
 watch(
-  [() => props.bracket.id, () => props.bracket.slots.length],
+  () => props.bracket.slots.length,
   () => {
     viewMode.value = bracketGroups.value.length > 1 ? 'groups' : 'ladder'
     activeGroupTab.value = groupTabs.value[0]?.value ?? 'group-0'
@@ -544,14 +501,28 @@ watch(
 useResizeObserver(boardRef, updateLines)
 useResizeObserver(viewportRef, () => fitToView({ force: false }))
 onMounted(async () => {
-  viewMode.value = bracketGroups.value.length > 1 ? 'groups' : 'ladder'
-  activeGroupTab.value = groupTabs.value[0]?.value ?? 'group-0'
-  await fitToView()
+  const savedViewMode = props.initialViewState?.viewMode
+  viewMode.value = availableViewModes.value.some((mode) => mode.value === savedViewMode)
+    ? savedViewMode
+    : bracketGroups.value.length > 1
+      ? 'groups'
+      : 'ladder'
+  const savedGroupTab = props.initialViewState?.activeGroupTab
+  activeGroupTab.value = groupTabs.value.some((tab) => tab.value === savedGroupTab)
+    ? savedGroupTab
+    : groupTabs.value[0]?.value ?? 'group-0'
+  const restored = await restorePanZoomViewState(props.initialViewState?.panZoom)
+  if (!restored) await fitToView()
   updateLines()
 })
 
 defineExpose({
   getExportElement: () => boardRef.value,
+  getViewState: () => ({
+    viewMode: viewMode.value,
+    activeGroupTab: activeGroupTab.value,
+    panZoom: getPanZoomViewState(),
+  }),
   fitToView,
 })
 </script>
@@ -599,13 +570,19 @@ defineExpose({
         >
           重新抽籤
         </button>
-        <button
-          type="button"
-          class="secondary-action repechage-manager-button"
-          @click="showRepechageManager = true"
-        >
-          {{ bracket.repechage?.enabled ? repechageStatusText : '啟用敗部復活' }}
-        </button>
+        <template v-if="isFree && awaitingSlotIndexes.length">
+          <button
+            type="button"
+            class="secondary-action"
+            :disabled="!loserCandidates.length"
+            @click="handleRandomFill"
+          >
+            隨機填入敗者{{ loserCandidates.length ? `（可用 ${loserCandidates.length} 人）` : '' }}
+          </button>
+          <button type="button" class="secondary-action" @click="handleConfirmAllByes">
+            剩餘 {{ awaitingSlotIndexes.length }} 格全部輪空
+          </button>
+        </template>
       </div>
 
       <button
@@ -734,7 +711,7 @@ defineExpose({
                 :key="match.id"
                 :ref="(el) => setMatchRef(match.id, el)"
                 class="match-shell"
-                :class="{ 'has-repechage': getRepechageMatchForMatch(match), 'focus-pulse': focusedMatchIds.includes(match.id) }"
+                :class="{ 'focus-pulse': focusedMatchIds.includes(match.id) }"
                 :style="getMatchGridStyle(round.length, match.matchIndex)"
               >
                 <div v-if="getMatchGroup(match)" class="group-marker">
@@ -744,18 +721,11 @@ defineExpose({
                 <MatchCard
                   :match="match"
                   :player-map="playerMap"
+                  :editable="isFree && match.roundIndex === 0"
                   @set-result="(...args) => emit('set-result', ...args)"
                   @update-score="(...args) => emit('update-score', ...args)"
+                  @edit-slot="openSlotEditor"
                 />
-                <div v-if="getRepechageMatchForMatch(match)" class="repechage-branch">
-                  <div class="repechage-branch-title">敗部復活</div>
-                  <MatchCard
-                    :match="getRepechageMatchForMatch(match)"
-                    :player-map="playerMap"
-                    @set-result="(...args) => emit('set-result', ...args)"
-                    @update-score="(...args) => emit('update-score', ...args)"
-                  />
-                </div>
               </div>
             </div>
           </div>
@@ -772,24 +742,17 @@ defineExpose({
                 :key="match.id"
                 :ref="(el) => setMatchRef(match.id, el)"
                 class="match-shell"
-                :class="{ 'has-repechage': getRepechageMatchForMatch(match), 'focus-pulse': focusedMatchIds.includes(match.id) }"
+                :class="{ 'focus-pulse': focusedMatchIds.includes(match.id) }"
                 :style="getMirrorMatchGridStyle(column, localIndex)"
               >
                 <MatchCard
                   :match="match"
                   :player-map="playerMap"
+                  :editable="isFree && match.roundIndex === 0"
                   @set-result="(...args) => emit('set-result', ...args)"
                   @update-score="(...args) => emit('update-score', ...args)"
+                  @edit-slot="openSlotEditor"
                 />
-                <div v-if="getRepechageMatchForMatch(match)" class="repechage-branch">
-                  <div class="repechage-branch-title">敗部復活</div>
-                  <MatchCard
-                    :match="getRepechageMatchForMatch(match)"
-                    :player-map="playerMap"
-                    @set-result="(...args) => emit('set-result', ...args)"
-                    @update-score="(...args) => emit('update-score', ...args)"
-                  />
-                </div>
               </div>
             </div>
           </div>
@@ -829,7 +792,7 @@ defineExpose({
                     :key="match.id"
                     :ref="(el) => setMatchRef(match.id, el)"
                     class="match-shell"
-                    :class="{ 'has-repechage': getRepechageMatchForMatch(match), 'focus-pulse': focusedMatchIds.includes(match.id) }"
+                    :class="{ 'focus-pulse': focusedMatchIds.includes(match.id) }"
                     :style="getGroupMatchGridStyle(activeGroupedSection, round.length, matchIndex)"
                   >
                     <MatchCard
@@ -838,15 +801,6 @@ defineExpose({
                       @set-result="(...args) => emit('set-result', ...args)"
                       @update-score="(...args) => emit('update-score', ...args)"
                     />
-                    <div v-if="getRepechageMatchForMatch(match)" class="repechage-branch">
-                      <div class="repechage-branch-title">敗部復活</div>
-                      <MatchCard
-                        :match="getRepechageMatchForMatch(match)"
-                        :player-map="playerMap"
-                        @set-result="(...args) => emit('set-result', ...args)"
-                        @update-score="(...args) => emit('update-score', ...args)"
-                      />
-                    </div>
                   </div>
                 </div>
               </div>
@@ -868,7 +822,7 @@ defineExpose({
                     :key="match.id"
                     :ref="(el) => setMatchRef(match.id, el)"
                     class="match-shell"
-                    :class="{ 'has-repechage': getRepechageMatchForMatch(match), 'focus-pulse': focusedMatchIds.includes(match.id) }"
+                    :class="{ 'focus-pulse': focusedMatchIds.includes(match.id) }"
                     :style="getFinalMatchGridStyle(round.length, matchIndex)"
                   >
                     <MatchCard
@@ -877,15 +831,6 @@ defineExpose({
                       @set-result="(...args) => emit('set-result', ...args)"
                       @update-score="(...args) => emit('update-score', ...args)"
                     />
-                    <div v-if="getRepechageMatchForMatch(match)" class="repechage-branch">
-                      <div class="repechage-branch-title">敗部復活</div>
-                      <MatchCard
-                        :match="getRepechageMatchForMatch(match)"
-                        :player-map="playerMap"
-                        @set-result="(...args) => emit('set-result', ...args)"
-                        @update-score="(...args) => emit('update-score', ...args)"
-                      />
-                    </div>
                   </div>
                 </div>
               </div>
@@ -894,242 +839,21 @@ defineExpose({
         </section>
       </div>
     </div>
-    <Teleport to="body">
-      <div
-        v-if="showRepechagePrompt"
-        class="modal-backdrop repechage-modal-backdrop"
-        @click.self="dismissRepechagePrompt"
-      >
-        <section class="modal-panel compact repechage-prompt-modal" role="dialog" aria-modal="true">
-          <header class="modal-header">
-            <div>
-              <span class="repechage-prompt-kicker">第一輪已完成</span>
-              <h2>是否使用敗部復活？</h2>
-            </div>
-            <button type="button" class="icon-button" aria-label="關閉" @click="dismissRepechagePrompt">
-              ×
-            </button>
-          </header>
-
-          <div class="repechage-prompt-body">
-            <p>
-              目前賽程偵測到同一支線原本會連續輪空，建議依照設定名額，把第一輪敗者安插到第一輪後面的空位。
-            </p>
-            <div class="repechage-prompt-summary">
-              <span>需要 {{ repechageRequiredPlayerCount }} 位第一輪敗者</span>
-              <strong>{{ repechageTargets.length }} 個安插位置</strong>
-            </div>
-          </div>
-
-          <div class="stage-actions">
-            <button type="button" class="primary-action" @click="openRepechageManagerFromPrompt">
-              使用敗部復活
-            </button>
-            <button type="button" class="secondary-action" @click="dismissRepechagePrompt">
-              這次不用
-            </button>
-          </div>
-        </section>
-      </div>
-
-      <div
-        v-if="showRepechageManager"
-        class="modal-backdrop repechage-modal-backdrop"
-        @click.self="showRepechageManager = false"
-      >
-        <section class="modal-panel compact repechage-modal" role="dialog" aria-modal="true">
-          <header class="modal-header">
-            <h2>敗部復活管理</h2>
-            <button type="button" class="icon-button" aria-label="關閉" @click="showRepechageManager = false">
-              ×
-            </button>
-          </header>
-
-          <div class="repechage-modal-body">
-            <template v-if="!bracket.repechage?.enabled">
-              <div v-if="!maxRepechageEntryCount" class="repechage-status-card">
-                <span>無需啟動</span>
-                <strong>本賽程無需敗部復活</strong>
-                <p>目前賽程沒有連續輪空兩次的支線。</p>
-              </div>
-              <template v-else>
-                <div class="repechage-status-card">
-                  <span>執行中啟用</span>
-                  <strong>最多可安插 {{ maxRepechageEntryCount }} 位第一輪敗者</strong>
-                  <p>
-                    系統只會在同一支線原本會連續輪空兩次時啟動，第一輪完成後依設定名額安插第一輪敗者。
-                  </p>
-                </div>
-                <div class="repechage-live-settings">
-                  <div class="segmented repechage-mode-control" role="radiogroup" aria-label="敗部復活選人方式">
-                    <button
-                      type="button"
-                      :class="{ active: draftSelectionMode === 'random' }"
-                      @click="draftSelectionMode = 'random'"
-                    >
-                      隨機抽選
-                    </button>
-                    <button
-                      type="button"
-                      :class="{ active: draftSelectionMode === 'manual' }"
-                      @click="draftSelectionMode = 'manual'"
-                    >
-                      手動指定
-                    </button>
-                  </div>
-                  <label class="repechage-entry-field">
-                    <span>復活名額</span>
-                    <input
-                      :value="clampedDraftEntryCount"
-                      type="number"
-                      min="1"
-                      :max="maxRepechageEntryCount"
-                      @change="onDraftEntryCountChange"
-                    />
-                  </label>
-                </div>
-                <p v-if="draftAffectedResultCount" class="repechage-impact-warning">
-                  啟用後將清除 {{ draftAffectedResultCount }} 場已完成場次的成績，需重新輸入。
-                </p>
-                <div class="stage-actions">
-                  <button type="button" class="primary-action" @click="applyRepechageSettings(true)">
-                    啟用敗部復活
-                  </button>
-                </div>
-              </template>
-            </template>
-            <template v-else>
-            <div class="repechage-status-card">
-              <span>需求</span>
-              <strong v-if="repechageTargets.length">
-                {{ repechageRequiredPlayerCount }} 人 / {{ repechageTargets.length }} 個位置
-              </strong>
-              <strong v-else>無需啟動</strong>
-              <p v-if="repechageTargets.length">
-                第一輪完成後，從敗者池挑選復活者，直接安插到第一輪後面的空位。
-              </p>
-              <p v-else>目前賽程沒有連續輪空兩次的支線。</p>
-            </div>
-
-            <div v-if="repechageTargets.length" class="repechage-status-card">
-              <span>第一輪進度</span>
-              <strong>{{ firstRoundState.completed }} / {{ firstRoundState.total }}</strong>
-              <p>{{ firstRoundState.complete ? '第一輪已完成，可以設定敗部復活。' : '請先完成所有第一輪可比賽場次。' }}</p>
-            </div>
-
-            <div v-if="!repechageSettingsLocked" class="repechage-status-card repechage-live-adjust">
-              <span>調整設定</span>
-              <div class="repechage-live-settings">
-                <div class="segmented repechage-mode-control" role="radiogroup" aria-label="敗部復活選人方式">
-                  <button
-                    type="button"
-                    :class="{ active: draftSelectionMode === 'random' }"
-                    @click="draftSelectionMode = 'random'"
-                  >
-                    隨機抽選
-                  </button>
-                  <button
-                    type="button"
-                    :class="{ active: draftSelectionMode === 'manual' }"
-                    @click="draftSelectionMode = 'manual'"
-                  >
-                    手動指定
-                  </button>
-                </div>
-                <label class="repechage-entry-field">
-                  <span>復活名額</span>
-                  <input
-                    :value="clampedDraftEntryCount"
-                    type="number"
-                    min="1"
-                    :max="maxRepechageEntryCount"
-                    @change="onDraftEntryCountChange"
-                  />
-                </label>
-              </div>
-              <div class="stage-actions">
-                <button type="button" class="secondary-action" @click="applyRepechageSettings(true)">
-                  套用調整
-                </button>
-                <button type="button" class="secondary-action" @click="applyRepechageSettings(false)">
-                  停用敗部復活
-                </button>
-              </div>
-              <p class="repechage-live-note">
-                停用後空位將恢復為輪空自動晉級；先前被清除的成績不會自動恢復。
-              </p>
-            </div>
-            <p v-else class="repechage-live-note">
-              {{
-                repechageStarted
-                  ? '敗部復活相關場次已開打，設定已鎖定。'
-                  : '復活名單已安插；如需調整設定或停用，請先點「重新選擇」。'
-              }}
-            </p>
-
-            <template v-if="repechageTargets.length && firstRoundState.complete">
-              <div v-if="repechageSelectionMode === 'manual'" class="repechage-manual-list">
-                <div class="repechage-list-header">
-                  <strong>手動指定復活名單</strong>
-                  <span>已選 {{ manualRepechageSelection.length }} / {{ repechageRequiredPlayerCount }}</span>
-                </div>
-                <button
-                  v-for="player in repechageCandidates"
-                  :key="player.id"
-                  type="button"
-                  class="repechage-candidate"
-                  :class="{ active: manualRepechageSelection.includes(player.id) }"
-                  :disabled="
-                    repechageStarted ||
-                    (!manualRepechageSelection.includes(player.id) &&
-                      manualRepechageSelection.length >= repechageRequiredPlayerCount)
-                  "
-                  @click="toggleManualRepechagePlayer(player.id)"
-                >
-                  <span>#{{ player.seed }}</span>
-                  <strong>{{ player.displayName }}</strong>
-                </button>
-              </div>
-
-              <div v-if="repechageMatches.length" class="repechage-pairings">
-                <div class="repechage-list-header">
-                  <strong>安插名單</strong>
-                  <span>已建立</span>
-                </div>
-                <div v-for="match in repechageMatches" :key="match.id" class="repechage-pairing-row">
-                  <span>{{ playerMap[match.playerA]?.displayName }}</span>
-                  <strong>→</strong>
-                  <span>第一輪後空位</span>
-                </div>
-              </div>
-
-              <div class="stage-actions">
-                <button
-                  type="button"
-                  class="primary-action"
-                  :disabled="
-                    repechageStarted ||
-                    (repechageSelectionMode === 'manual' &&
-                      manualRepechageSelection.length !== repechageRequiredPlayerCount)
-                  "
-                  @click="configureRepechage"
-                >
-                  {{ repechageSelectionMode === 'manual' ? '確認指定並安插' : '隨機安插復活名單' }}
-                </button>
-                <button
-                  type="button"
-                  class="secondary-action"
-                  :disabled="repechageStarted || !repechageMatches.length"
-                  @click="resetRepechage"
-                >
-                  重新選擇
-                </button>
-              </div>
-            </template>
-            </template>
-          </div>
-        </section>
-      </div>
-    </Teleport>
+    <SlotEditor
+      v-if="slotEditorIndex !== null"
+      :slot-index="slotEditorIndex"
+      :current-player="slotEditorPlayer"
+      :is-confirmed-bye="slotEditorIsConfirmedBye"
+      :unassigned-players="unassignedPlayers"
+      :loser-candidates="loserCandidates"
+      :awaiting-slot-count="awaitingSlotIndexes.length"
+      @fill="handleSlotFill"
+      @create="handleSlotCreate"
+      @clear="handleSlotClear"
+      @confirm-bye="handleSlotConfirmBye"
+      @confirm-all-byes="handleConfirmAllByes"
+      @revoke-bye="handleSlotRevokeBye"
+      @close="closeSlotEditor"
+    />
   </section>
 </template>

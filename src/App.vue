@@ -2,8 +2,13 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import BracketListModal from './components/BracketListModal.vue'
 import BracketSetup from './components/BracketSetup.vue'
+import BracketTabs from './components/BracketTabs.vue'
 import BracketView from './components/BracketView.vue'
+import CloseBracketModal from './components/CloseBracketModal.vue'
 import LotteryModal from './components/LotteryModal.vue'
+import NewBracketModal from './components/NewBracketModal.vue'
+import PrelimView from './components/PrelimView.vue'
+import RenameBracketModal from './components/RenameBracketModal.vue'
 import ThemePicker from './components/ThemePicker.vue'
 import Toolbar from './components/Toolbar.vue'
 import battleTreeLogo from './assets/logo.svg'
@@ -14,13 +19,16 @@ import { createImageUrl, getStoredImage, removeStoredImage, setStoredImage } fro
 
 const {
   bracketList,
+  openBrackets,
   currentId,
   currentBracket,
   addBracket,
-  selectBracket,
+  openBracketTab,
+  closeBracketTab,
   deleteBracket,
   resetCurrentBracket,
   updateCurrent,
+  renameBracket,
   setPlayerCount,
   addPlayer,
   importPlayers,
@@ -30,13 +38,21 @@ const {
   shufflePlayerSeeds,
   setPairingMode,
   setGroupCount,
-  setRepechageEnabled,
-  setRepechageSelectionMode,
-  setRepechageEntryCount,
+  setFormat,
+  setPrelimGroupSize,
+  setPrelimResult,
+  updatePrelimScore,
+  generateKnockoutFromPrelim,
+  reopenPrelim,
+  setFreeSlotCount,
+  fillFreeSlot,
+  addAndFillFreeSlot,
+  clearFreeSlot,
+  confirmFreeSlotBye,
+  revokeFreeSlotBye,
+  randomFillFreeSlots,
+  confirmAllRemainingByes,
   generateBracket,
-  configureRepechage,
-  applyRepechageSettingsDuringMatch,
-  resetRepechageSelection,
   setResult,
   updateScore,
   updateLottery,
@@ -55,12 +71,16 @@ const styleThemes = [
   { value: 'copper', label: '赤銅', swatches: ['#4a2518', '#f5eee8', '#b56a42'] },
 ]
 const showList = ref(false)
+const showNewBracket = ref(false)
 const showLottery = ref(false)
 const showHomeConfirm = ref(false)
 const showResultModal = ref(false)
-const dismissedResultKey = ref('')
+const closingBracketId = ref(null)
+const renamingBracketId = ref(null)
+const dismissedResultKeys = ref(new Set())
 const exportTarget = ref(null)
 const bracketViewRef = ref(null)
+const tabUiStates = new Map()
 const generationErrors = ref([])
 const showHome = ref(localStorage.getItem(VIEW_STORAGE) !== 'app')
 const homeLeaving = ref(false)
@@ -70,7 +90,18 @@ const customLogo = ref('')
 const backgroundImage = ref('')
 
 const canExport = computed(() => currentBracket.value?.status === 'ready')
+const bracketStage = ref('knockout')
+const showStageTabs = computed(
+  () => currentBracket.value?.format === 'prelim' && currentBracket.value?.status === 'ready',
+)
+const showPrelimStage = computed(() => {
+  const bracket = currentBracket.value
+  if (bracket?.format !== 'prelim') return false
+  return bracket.status === 'prelim' || (bracket.status === 'ready' && bracketStage.value === 'prelim')
+})
 const displayedLogo = computed(() => customLogo.value || battleTreeLogo)
+const closingBracket = computed(() => bracketList.value.find((bracket) => bracket.id === closingBracketId.value) ?? null)
+const renamingBracket = computed(() => bracketList.value.find((bracket) => bracket.id === renamingBracketId.value) ?? null)
 const podium = computed(() => (currentBracket.value ? getPodium(currentBracket.value) : null))
 const resultRows = computed(() => {
   const bracket = currentBracket.value
@@ -102,6 +133,30 @@ const exportApi = useBracketExport(
 )
 const isFullscreen = computed(() => exportApi.isFullscreen.value)
 
+function dismissCurrentResult() {
+  const key = resultCompletionKey.value
+  if (!key) return
+  dismissedResultKeys.value = new Set([...dismissedResultKeys.value, key])
+}
+
+function clearDismissedResults(bracketId) {
+  if (!bracketId) return
+  dismissedResultKeys.value = new Set(
+    [...dismissedResultKeys.value].filter((key) => !key.startsWith(`${bracketId}:`)),
+  )
+}
+
+function captureCurrentTabState() {
+  const id = currentId.value
+  if (!id) return
+  const previous = tabUiStates.get(id) ?? {}
+  tabUiStates.set(id, {
+    ...previous,
+    bracketStage: bracketStage.value,
+    bracketView: bracketViewRef.value?.getViewState?.() ?? previous.bracketView ?? null,
+  })
+}
+
 function updateName(value) {
   const name = typeof value === 'string' ? value : value.target.value
   updateCurrent({ name: name || '新對戰表' })
@@ -112,30 +167,88 @@ function handleGenerate() {
   generationErrors.value = result.errors
   if (result.ok) {
     showResultModal.value = false
-    dismissedResultKey.value = ''
+    clearDismissedResults(currentId.value)
+    tabUiStates.delete(currentId.value)
   }
 }
 
 function handleAddBracket() {
+  dismissCurrentResult()
   showResultModal.value = false
-  dismissedResultKey.value = resultCompletionKey.value
-  addBracket()
+  showNewBracket.value = true
+}
+
+function handleCreateBracket(options) {
+  captureCurrentTabState()
+  addBracket({ ...options, sourceBracketId: currentId.value })
+  showNewBracket.value = false
   localStorage.setItem(VIEW_STORAGE, 'app')
   showHome.value = false
+}
+
+function handleOpenSavedBracket(id) {
+  if (id !== currentId.value) captureCurrentTabState()
+  openBracketTab(id)
+  showNewBracket.value = false
+}
+
+function handleRenameBracket(id, name) {
+  renameBracket(id, name)
+}
+
+function saveRenamedBracket(name) {
+  if (renamingBracketId.value) renameBracket(renamingBracketId.value, name)
+  renamingBracketId.value = null
 }
 
 function handleDelete(id = currentId.value) {
   const bracket = bracketList.value.find((item) => item.id === id)
   if (!bracket) return
   if (confirm(`確定刪除「${bracket.name}」？`)) {
+    if (id === currentId.value) captureCurrentTabState()
     deleteBracket(id)
+    tabUiStates.delete(id)
     if (showList.value && !bracketList.value.length) showList.value = false
   }
 }
 
 function handleSelect(id) {
-  selectBracket(id)
+  if (id !== currentId.value) captureCurrentTabState()
+  openBracketTab(id)
   showList.value = false
+}
+
+function handleCloseTab(id) {
+  if (!bracketList.value.some((bracket) => bracket.id === id)) return
+  closingBracketId.value = id
+}
+
+function saveAndCloseBracket() {
+  const id = closingBracketId.value
+  if (!id) return
+  const wasCurrent = id === currentId.value
+  if (wasCurrent) captureCurrentTabState()
+  closeBracketTab(id)
+  if (wasCurrent) {
+    showLottery.value = false
+    showResultModal.value = false
+  }
+  closingBracketId.value = null
+}
+
+function deleteClosingBracket() {
+  const id = closingBracketId.value
+  if (!id) return
+  const wasCurrent = id === currentId.value
+  if (wasCurrent) captureCurrentTabState()
+  deleteBracket(id)
+  tabUiStates.delete(id)
+  if (wasCurrent) {
+    showLottery.value = false
+    showResultModal.value = false
+  }
+  if (showList.value && !bracketList.value.length) showList.value = false
+  closingBracketId.value = null
 }
 
 function handleReshuffle() {
@@ -144,8 +257,31 @@ function handleReshuffle() {
   }
 }
 
-function handleApplyRepechageSettings(payload) {
-  const result = applyRepechageSettingsDuringMatch(payload)
+function handlePrelimReshuffle() {
+  if (confirm('重新分組抽籤會清空所有預賽結果，確定繼續？')) {
+    generateBracket('random')
+  }
+}
+
+function handleGenerateKnockout() {
+  const result = generateKnockoutFromPrelim()
+  if (!result.ok) {
+    alert(result.errors.join('\n'))
+    return
+  }
+  bracketStage.value = 'knockout'
+  tabUiStates.delete(currentId.value)
+}
+
+function handleReopenPrelim() {
+  if (confirm('回到預賽修改會清除目前淘汰賽的所有結果，確定繼續？')) {
+    reopenPrelim()
+    bracketStage.value = 'prelim'
+  }
+}
+
+function handleSetFreeSlotCount(count) {
+  const result = setFreeSlotCount(count)
   if (!result.ok) alert(result.errors.join('\n'))
 }
 
@@ -164,7 +300,11 @@ function requestHome() {
 }
 
 function returnHome({ preserve }) {
-  if (!preserve) resetCurrentBracket()
+  captureCurrentTabState()
+  if (!preserve) {
+    tabUiStates.delete(currentId.value)
+    resetCurrentBracket()
+  }
   showResultModal.value = false
   showHomeConfirm.value = false
   localStorage.setItem(VIEW_STORAGE, 'home')
@@ -177,15 +317,16 @@ async function downloadCompletedBracket() {
 }
 
 function goHomeFromResult() {
+  captureCurrentTabState()
+  dismissCurrentResult()
   showResultModal.value = false
-  dismissedResultKey.value = resultCompletionKey.value
   localStorage.setItem(VIEW_STORAGE, 'home')
   showHome.value = true
   homeLeaving.value = false
 }
 
 function closeResultModal() {
-  dismissedResultKey.value = resultCompletionKey.value
+  dismissCurrentResult()
   showResultModal.value = false
 }
 
@@ -266,9 +407,30 @@ onMounted(async () => {
 })
 
 watch(
+  () => [currentBracket.value?.id, currentBracket.value?.status],
+  ([id, status], [previousId] = []) => {
+    generationErrors.value = []
+    showLottery.value = false
+    showResultModal.value = false
+    if (!id) {
+      bracketStage.value = 'knockout'
+      return
+    }
+    if (id !== previousId) {
+      bracketStage.value =
+        tabUiStates.get(id)?.bracketStage ?? (status === 'prelim' ? 'prelim' : 'knockout')
+      return
+    }
+    if (status === 'prelim') bracketStage.value = 'prelim'
+    if (status === 'setup') bracketStage.value = 'knockout'
+  },
+  { immediate: true },
+)
+
+watch(
   resultCompletionKey,
   (key) => {
-    if (!key || key === dismissedResultKey.value) return
+    if (!key || dismissedResultKeys.value.has(key)) return
     showResultModal.value = true
   },
   { immediate: true },
@@ -281,7 +443,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="app-shell" :data-theme="currentTheme" :style="shellStyle">
+  <main
+    class="app-shell"
+    :class="{ 'battle-active': !showHome && currentBracket && currentBracket.status !== 'setup' }"
+    :data-theme="currentTheme"
+    :style="shellStyle"
+  >
     <section v-if="showHome" class="home-screen" :class="{ leaving: homeLeaving }">
       <ThemePicker
         class="home-theme-picker"
@@ -313,33 +480,56 @@ onBeforeUnmount(() => {
     </section>
 
     <template v-else>
-    <Toolbar
-      :can-export="canExport"
-      :is-fullscreen="isFullscreen"
-      :logo-src="displayedLogo"
-      :current-theme="currentTheme"
-      :style-themes="styleThemes"
-      :background-image="backgroundImage"
-      :background-fit="backgroundFit"
-      :has-custom-logo="Boolean(customLogo)"
-      :has-background-image="Boolean(backgroundImage)"
-      @add="handleAddBracket"
-      @list="showList = true"
-      @delete="handleDelete()"
-      @lottery="showLottery = true"
-      @fullscreen="exportApi.toggle"
-      @download="exportApi.downloadJpeg"
-      @home="requestHome"
-      @set-theme="setTheme"
-      @set-background-fit="setBackgroundFit"
-      @set-logo="setCustomLogo"
-      @reset-logo="resetCustomLogo"
-      @set-background="setBackgroundImage"
-      @reset-background="resetBackgroundImage"
-    />
+    <div class="app-navigation">
+      <Toolbar
+        :has-current-bracket="Boolean(currentBracket)"
+        :can-export="canExport"
+        :is-fullscreen="isFullscreen"
+        :logo-src="displayedLogo"
+        :current-theme="currentTheme"
+        :style-themes="styleThemes"
+        :background-image="backgroundImage"
+        :background-fit="backgroundFit"
+        :has-custom-logo="Boolean(customLogo)"
+        :has-background-image="Boolean(backgroundImage)"
+        @add="handleAddBracket"
+        @list="showList = true"
+        @delete="handleDelete()"
+        @lottery="showLottery = true"
+        @fullscreen="exportApi.toggle"
+        @download="exportApi.downloadJpeg"
+        @home="requestHome"
+        @set-theme="setTheme"
+        @set-background-fit="setBackgroundFit"
+        @set-logo="setCustomLogo"
+        @reset-logo="resetCustomLogo"
+        @set-background="setBackgroundImage"
+        @reset-background="resetBackgroundImage"
+      />
+      <BracketTabs
+        :brackets="openBrackets"
+        :current-id="currentId"
+        @select="handleSelect"
+        @close="handleCloseTab"
+        @add="handleAddBracket"
+        @rename="handleRenameBracket"
+        @request-rename="renamingBracketId = $event"
+      />
+    </div>
 
-    <section v-if="currentBracket?.status === 'setup'" class="content-wrap">
+    <section v-if="!currentBracket" id="bracket-workspace" class="empty-workspace">
+      <span>WORKSPACE EMPTY</span>
+      <h1>尚未開啟對戰表</h1>
+      <p>新增一份對戰表，或從已儲存的對戰表中重新開啟。</p>
+      <div class="empty-workspace-actions">
+        <button type="button" class="primary-action" @click="handleAddBracket">新增對戰表</button>
+        <button type="button" class="secondary-action" @click="showList = true">從所有對戰表開啟</button>
+      </div>
+    </section>
+
+    <section v-else-if="currentBracket.status === 'setup'" id="bracket-workspace" class="content-wrap">
       <BracketSetup
+        :key="currentBracket.id"
         :bracket="currentBracket"
         @update-name="updateName"
         @set-player-count="setPlayerCount"
@@ -351,9 +541,9 @@ onBeforeUnmount(() => {
         @shuffle-player-seeds="shufflePlayerSeeds"
         @set-pairing-mode="setPairingMode"
         @set-group-count="setGroupCount"
-        @set-repechage-enabled="setRepechageEnabled"
-        @set-repechage-selection-mode="setRepechageSelectionMode"
-        @set-repechage-entry-count="setRepechageEntryCount"
+        @set-format="setFormat"
+        @set-prelim-group-size="setPrelimGroupSize"
+        @set-free-slot-count="handleSetFreeSlotCount"
         @generate="handleGenerate"
       />
       <ul v-if="generationErrors.length" class="error-list">
@@ -361,7 +551,13 @@ onBeforeUnmount(() => {
       </ul>
     </section>
 
-    <section v-else ref="exportTarget" class="export-surface" :class="{ fullscreen: isFullscreen }">
+    <section
+      v-else
+      id="bracket-workspace"
+      ref="exportTarget"
+      class="export-surface"
+      :class="{ fullscreen: isFullscreen, 'prelim-stage': showPrelimStage }"
+    >
       <button
         v-if="isFullscreen"
         type="button"
@@ -372,15 +568,49 @@ onBeforeUnmount(() => {
         <span></span>
         <span></span>
       </button>
+      <div v-if="showStageTabs" class="segmented stage-tabs" role="tablist" aria-label="賽事階段">
+        <button
+          type="button"
+          :class="{ active: bracketStage === 'prelim' }"
+          @click="bracketStage = 'prelim'"
+        >
+          預賽
+        </button>
+        <button
+          type="button"
+          :class="{ active: bracketStage === 'knockout' }"
+          @click="bracketStage = 'knockout'"
+        >
+          淘汰賽
+        </button>
+      </div>
+      <PrelimView
+        v-if="showPrelimStage"
+        :key="`${currentBracket.id}-prelim`"
+        :bracket="currentBracket"
+        :locked="currentBracket.status === 'ready'"
+        @set-result="setPrelimResult"
+        @update-score="updatePrelimScore"
+        @generate-knockout="handleGenerateKnockout"
+        @reshuffle="handlePrelimReshuffle"
+        @reopen="handleReopenPrelim"
+      />
       <BracketView
+        v-else
+        :key="currentBracket.id"
         ref="bracketViewRef"
         :bracket="currentBracket"
+        :initial-view-state="tabUiStates.get(currentBracket.id)?.bracketView ?? null"
         @set-result="setResult"
         @update-score="updateScore"
         @reshuffle="handleReshuffle"
-        @configure-repechage="configureRepechage"
-        @apply-repechage-settings="handleApplyRepechageSettings"
-        @reset-repechage="resetRepechageSelection"
+        @fill-free-slot="fillFreeSlot"
+        @add-free-player="addAndFillFreeSlot"
+        @clear-free-slot="clearFreeSlot"
+        @confirm-free-bye="confirmFreeSlotBye"
+        @revoke-free-bye="revokeFreeSlotBye"
+        @random-fill-free-slots="randomFillFreeSlots"
+        @confirm-all-byes="confirmAllRemainingByes"
       />
     </section>
 
@@ -388,9 +618,35 @@ onBeforeUnmount(() => {
       v-if="showList"
       :brackets="bracketList"
       :current-id="currentId"
+      :open-ids="openBrackets.map((bracket) => bracket.id)"
       @close="showList = false"
       @select="handleSelect"
       @delete="handleDelete"
+    />
+
+    <NewBracketModal
+      v-if="showNewBracket"
+      :current-bracket="currentBracket"
+      :brackets="bracketList"
+      :open-ids="openBrackets.map((bracket) => bracket.id)"
+      @close="showNewBracket = false"
+      @create="handleCreateBracket"
+      @open-saved="handleOpenSavedBracket"
+    />
+
+    <CloseBracketModal
+      v-if="closingBracket"
+      :bracket="closingBracket"
+      @cancel="closingBracketId = null"
+      @save="saveAndCloseBracket"
+      @delete="deleteClosingBracket"
+    />
+
+    <RenameBracketModal
+      v-if="renamingBracket"
+      :bracket="renamingBracket"
+      @cancel="renamingBracketId = null"
+      @save="saveRenamedBracket"
     />
 
     <LotteryModal

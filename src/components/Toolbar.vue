@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import ThemePicker from './ThemePicker.vue'
 
 const props = defineProps({
+  hasCurrentBracket: Boolean,
   canExport: Boolean,
   isFullscreen: Boolean,
   logoSrc: {
@@ -72,9 +73,9 @@ const isMobileMenuOpen = ref(false)
     </button>
     <div class="toolbar-actions">
       <button type="button" @click="$emit('add')">新增</button>
-      <button type="button" @click="$emit('list')">選取</button>
-      <button type="button" @click="$emit('delete')">刪除</button>
-      <button type="button" @click="$emit('lottery')">抽籤</button>
+      <button type="button" @click="$emit('list')">所有對戰表</button>
+      <button type="button" :disabled="!hasCurrentBracket" @click="$emit('delete')">刪除</button>
+      <button type="button" :disabled="!hasCurrentBracket" @click="$emit('lottery')">抽籤</button>
       <button
         type="button"
         class="fullscreen-action"

@@ -163,6 +163,7 @@ localStorage keys：
 
 - `battletree:brackets`
 - `battletree:currentId`
+- `battletree:openTabs`：依開啟順序保存分頁 ID；關閉分頁不刪除 bracket 資料。
 
 `Bracket`：
 
@@ -184,14 +185,11 @@ localStorage keys：
     }
   ],
   pairingMode: 'order' | 'random',
+  format: 'single' | 'prelim' | 'free',
   groupCount: 1 | 2 | 4 | 8,
-  repechage: {
-    enabled: boolean,
-    selectionMode: 'random' | 'manual',
-    targets: RepechageTarget[],
-    selectedPlayerIds: string[],
-    matches: RepechageMatch[]
-  },
+  freeSlotCount: 8 | 16 | 32 | 64,
+  byeSlots: number[],
+  refillSlots: number[],
 
   bracketSize: number,
   slots: (string | null)[],
@@ -216,7 +214,6 @@ localStorage keys：
 特殊結果：
 
 - `third-place`：第三名爭奪戰結果，來源為總決賽兩側來源場次的敗者。
-- `repechage-${number}`：敗部復活安插資料，`entryPlayerId` 會補入對應 target。
 
 資料規則：
 
@@ -229,8 +226,7 @@ localStorage keys：
 - 點擊「重新排序參賽編號」才會依目前名單順序重編 `seed`。
 - `groupCount` 只允許 1、2、4、8，且不得超過 `Math.floor(players.length / 2)`。
 - `bracketSize` 為產生後 slots 長度。
-- 修改 players、移除參賽者、重新排序編號、pairingMode、groupCount 後，ready 對戰表回到 setup，並清空 slots/results。
-- 敗部復活只修正同一支線原本會連續輪空兩次的情況；主辦可設定復活名額，第一輪敗者會被安插到第一輪後面的空位並一路往上打。
+- 修改 players、移除參賽者、重新排序編號、pairingMode、groupCount、format、freeSlotCount 後，ready 對戰表回到 setup，並清空 slots/results/byeSlots/refillSlots。
 
 ---
 
@@ -249,22 +245,23 @@ function getBracketSize(count) {
 }
 ```
 
-### 6.2 相鄰配對
+### 6.2 種子配對
 
 規則：
 
-- `order`：依 `seed` 升冪排序後相鄰配對，例如 1 vs 2、3 vs 4。
-- `random`：隨機組對首輪位置，並避免 `seed` 相差 1 的選手首輪對上；若條件不可行，保留目前找到的最低衝突安排。
-- 未滿 2 次方的空位填 `null`，視為 bye。
+- 選手依標準種子表（`getSeedOrder`，蛇形分佈）放入 slots：rank 1 在最上、rank 2 在最下半區，第一輪配對為 rank k vs rank (size+1−k)，左右半區人數與輪空平均分佈。
+- `order`：依 `seed` 升冪排序後套種子分佈，例如 40 人開 64 格時 1~24 號第一輪輪空、25~40 號互打（25 vs 40、26 vs 39…），編號 1、2 分居兩半區、預期決賽相遇。
+- `random`：抽出的順序套同樣的種子分佈，並避免 `seed` 相差 1 的選手首輪對上；若條件不可行，保留目前找到的最低衝突安排。輪空落在誰身上由抽籤決定。
+- 未滿 2 次方的空位填 `null`，視為 bye；因種子分佈，bye 平均散佈於各半區、優先落在 rank 前段。
 - 空對空分支標記為 `isEmpty`，只保留版面結構，不顯示卡片，也不產生等待中的來源。
-- 啟用敗部復活時，若某支線原本會連續輪空兩次，第一輪後面的空位可被復活者填入。
+- 啟用敗部復活時，若某支線原本會連續輪空兩次，第一輪後面的空位可被復活者填入。因人數必大於 bracket 的一半，單一對戰表（或組內人數過半的組）不會出現連續輪空；連續輪空只會發生在分組不均、末組人數 ≤ 組 slot 數一半的情況。
 
 ### 6.3 分組
 
 `createGroupedSlots(players, pairingMode, groupCount)`：
 
 - `groupCount <= 1`：產生單一對戰表。
-- `groupCount > 1`：依選手順序切成多組，各組內使用相鄰配對。
+- `groupCount > 1`：依選手順序切成多組，各組內使用種子配對。
 - 每組補齊到各組所需的 2 次方 slot。
 - 回傳總 slots 與 groups metadata。
 
@@ -322,18 +319,6 @@ match 結構：
 - 季軍戰與冠軍戰都有結果後，榮譽榜顯示冠軍、亞軍、季軍、第四名。
 - 修改四強或更早結果時，既有季軍戰結果需要清除；只修改冠軍戰結果時保留季軍戰結果。
 
-敗部復活規則：
-
-- 設定頁與執行中皆可啟用敗部復活，並選擇 `random` 或 `manual`。
-- 產生對戰表時依復活名額建立安插 targets；無連續輪空時 targets 為空。
-- 執行中透過 `applyRepechageSettingsDuringMatch` 啟用/調整/停用：以 `analyzeRepechageInsertionTargets(bracket.slots, groupCount)` 就地補建 targets、不重生 slots，並以 `sanitizeResults` 連鎖清除因等待復活者而不再合法的下游成績（UI 會先預覽影響場數並確認）；復活相關場次開打後鎖定。
-- 第一輪全部完成後，從第一輪敗者建立復活池。
-- 每個 target 需要 1 位第一輪敗者安插。
-- 隨機模式由系統抽選；手動模式由主辦指定精確人數。
-- 安插後的主賽場次尚未有結果前可重新選擇；開賽後鎖定。
-- 修改第一輪結果會清除復活名單與安插資料。
-- 復活者直接進入主對戰樹，不再使用外掛復活賽分支。
-
 ### 6.5 連鎖清除
 
 改變或取消某場勝者後，必須清除後續不合法 result。
@@ -343,6 +328,34 @@ match 結構：
 - 若後續 result 指向的選手不再存在於該 match 的 A/B，刪除該 result。
 - 若 `third-place` 的選手來源不再合法，刪除該 result。
 - 重複檢查直到所有結果合法。
+
+### 6.6 預賽賽制（小組循環＋淘汰賽）
+
+`format: 'single' | 'prelim' | 'free'`；預賽引擎在 `usePrelimEngine.js`（純函式）。`format === 'prelim'` 時整體流程為 `setup → prelim → ready`，可徹底消除輪空。
+
+規則：
+
+- 分組：`prelimGroupSize`（3/4/5，預設 3）決定目標組數 `round(n / size)`，各組人數差最多 1。依序配對＝依編號蛇形分組（各組實力平均）；隨機抽籤＝洗牌後分組。
+- 組內循環賽：circle method 排程，match id 為 `p{group}-m{index}`，結果存於 `prelim.results`（與淘汰賽 results 分離）。
+- 積分榜排序：勝場 → 兩人同勝場時直接對戰結果 → 得失分差 → 總得分 → 編號。
+- 晉級：淘汰賽規模 K＝組數的下一個 2 次方（組數本身是 2 次方時取 2 倍）。各組第 1 名晉級，不足 K 的名額由「成績最佳的第 2 名」遞補（跨組比較用場均數據：勝率 → 場均得失分差 → 場均得分 → 編號）。
+- 淘汰賽：晉級者依成績排名套標準種子分佈（`getSeedOrder`），第一輪盡量避開同組對戰。K 為 2 次方，淘汰賽零輪空。
+- 預賽全部完成後才能產生淘汰賽；淘汰賽產生後預賽結果鎖定，可透過「修改預賽」清除淘汰賽結果回到預賽。
+
+### 6.7 自由編排賽制（format: 'free'）
+
+主辦手動選對戰格數（`freeSlotCount`：8/16/32/64，預設依人數往上取 2 次方；人數 > 格數擋下、上限 64 人），名單依配對方式套種子分佈排入、左右平均，剩餘格子為空位。
+
+規則：
+
+- **待定三態**（僅第一輪）：空 slot 未確認輪空前為「待定」（`isAwaitingEntry`），該場不可判勝、對手不晉級、下游等待；`byeSlots` 內的空 slot 視為已確認輪空，對手自動晉級；兩格皆確認輪空 → `isEmpty` 沿現行傳遞。第二輪以後 null 行為不變。
+- **填人來源**（點格位開啟 SlotEditor）：名單中未排入者／第一輪敗者（填入後同一人在第一輪再打一次，最多出現 2 次）／手動輸入新人名（seed＝現有最大＋1，直接加入名單並填入）。
+- **編輯**：已填格可換人或清空（改回待定）；已確認輪空可取消。變更會以 `sanitizeResults` 連鎖清除受影響下游成績，UI 先預告場數並確認。
+- **一鍵操作**：「隨機填入敗者」從尚未被選過的第一輪敗者隨機抽滿待定格（不足時剩餘維持待定）；「剩餘全部輪空」把所有待定格標記為輪空。
+- **改判防護**：第一輪改判後 `releaseInvalidRefills` 檢查被填入的敗者是否仍具敗者身分，失效者該格自動清回待定（`refillSlots` 追蹤填入格）。
+- 自由模式強制 `groupCount = 1`；季軍戰、mirror 視圖、榮譽榜、匯出照常。有待定格時冠軍不會產生（預期行為）。
+
+> 舊「敗部復活（repechage）」機制已於此版本完全移除，由自由編排的「填入第一輪敗者」取代。
 
 ---
 
@@ -401,7 +414,10 @@ src/
 - 左上角 Logo 使用預設 Logo 或自訂 Logo。
 - 自訂 Logo 保持原色。
 - 點 Logo 回首頁前需詢問是否保留內容。
-- 工具列按鈕：新增、選取、刪除、抽籤、全螢幕、下載 JPG、風格設定。
+- 工具列按鈕：新增、所有對戰表、刪除、抽籤、全螢幕、下載 JPG、風格設定。
+- 工具列下方提供 Chrome 式對戰表分頁；桌機橫向捲動，手機使用下拉選單。
+- `＋` 先選賽制與空白／複製目前名單，再建立並切換至新分頁。
+- 關閉分頁只收起；刪除才移除資料。關閉最後分頁時顯示空白工作區。
 - 風格設定按鈕位於最右側。
 - 手機版使用收合選單。
 - 手機版隱藏全螢幕與縮放百分比/縮放按鈕。
@@ -510,7 +526,7 @@ src/
 - 可點擊重新排序參賽編號，將目前名單重編為連續編號。
 - 修改姓名可正常保存。
 - 依序配對與隨機配對皆可產生對戰表。
-- 10 人依序配對第一輪應為 1 vs 2、3 vs 4、5 vs 6、7 vs 8、9 vs 10。
+- 10 人依序配對（16 格）第一輪應為 1~6 號輪空，7 vs 10、8 vs 9 互打；左右半區各 5 人。
 
 ### 11.2 分組與視角
 

@@ -12,9 +12,10 @@ const props = defineProps({
     type: Object,
     required: true,
   },
+  editable: Boolean,
 })
 
-const emit = defineEmits(['set-result', 'update-score'])
+const emit = defineEmits(['set-result', 'update-score', 'edit-slot'])
 
 const playerA = computed(() => props.playerMap[props.match.playerA] ?? null)
 const playerB = computed(() => props.playerMap[props.match.playerB] ?? null)
@@ -23,12 +24,17 @@ const winnerSlot = computed(() => {
   return props.match.winnerId === props.match.playerA ? 0 : 1
 })
 const hasManualResult = computed(() => Boolean(props.match.result))
+
+function onEdit(side) {
+  if (!props.editable) return
+  emit('edit-slot', props.match.matchIndex * 2 + side)
+}
 </script>
 
 <template>
   <article
     class="match-card"
-    :class="{ resolved: match.winnerId, bye: match.isBye, empty: match.isEmpty, repechage: match.isRepechage }"
+    :class="{ resolved: match.winnerId, bye: match.isBye, empty: match.isEmpty, awaiting: match.isAwaitingEntry }"
   >
     <PlayerSlot
       :player="playerA"
@@ -36,8 +42,10 @@ const hasManualResult = computed(() => Boolean(props.match.result))
       :is-winner="winnerSlot === 0"
       :is-loser="winnerSlot === 1 && Boolean(playerA)"
       :can-win="match.isPlayable"
-      :is-repechage-entry="match.isRepechagePlayerA"
+      :is-awaiting="Boolean(match.awaitingA)"
+      :can-edit="editable"
       @win="emit('set-result', match.id, 0)"
+      @edit="onEdit"
     />
     <PlayerSlot
       :player="playerB"
@@ -45,8 +53,10 @@ const hasManualResult = computed(() => Boolean(props.match.result))
       :is-winner="winnerSlot === 1"
       :is-loser="winnerSlot === 0 && Boolean(playerB)"
       :can-win="match.isPlayable"
-      :is-repechage-entry="match.isRepechagePlayerB"
+      :is-awaiting="Boolean(match.awaitingB)"
+      :can-edit="editable"
       @win="emit('set-result', match.id, 1)"
+      @edit="onEdit"
     />
     <ScorePopover
       v-if="hasManualResult"

@@ -3,8 +3,15 @@ import { computed, ref, watch } from 'vue'
 import csvHelpOpenSheet from '../assets/01-打開試算表.png'
 import csvHelpNameColumn from '../assets/02-確認一定欄位名稱要是姓名.png'
 import csvHelpDownloadCsv from '../assets/03-匯出csv.png'
+import { FORMAT_OPTIONS } from '../constants/bracketOptions'
 import { extractPlayerEntries, parseCsvTable } from '../composables/useCsvPlayers'
-import { getRepechageRequirements, validatePlayers } from '../composables/useBracketEngine'
+import {
+  FREE_SLOT_COUNT_OPTIONS,
+  getFirstRoundPreview,
+  normalizeFreeSlotCount,
+  validatePlayers,
+} from '../composables/useBracketEngine'
+import { getPrelimPlan, PRELIM_GROUP_SIZE_OPTIONS } from '../composables/usePrelimEngine'
 
 const props = defineProps({
   bracket: {
@@ -24,9 +31,9 @@ const emit = defineEmits([
   'shuffle-player-seeds',
   'set-pairing-mode',
   'set-group-count',
-  'set-repechage-enabled',
-  'set-repechage-selection-mode',
-  'set-repechage-entry-count',
+  'set-format',
+  'set-prelim-group-size',
+  'set-free-slot-count',
   'generate',
 ])
 const GROUP_OPTIONS = [1, 2, 4, 8]
@@ -43,7 +50,6 @@ const csvRows = ref([])
 const csvSelectedColumn = ref(0)
 const csvSelectedTitleColumn = ref(-1)
 const csvColumnErrors = ref([])
-const showRepechageExplainer = ref(false)
 const csvHelpSteps = [
   {
     image: csvHelpOpenSheet,
@@ -64,15 +70,47 @@ const csvHelpSteps = [
 const availableGroupOptions = computed(() =>
   GROUP_OPTIONS.filter((count) => count <= Math.floor(props.bracket.players.length / 2)),
 )
-const repechageRequirements = computed(() =>
-  getRepechageRequirements(props.bracket.players, props.bracket.pairingMode, props.bracket.groupCount),
+const effectiveFreeSlotCount = computed(() =>
+  normalizeFreeSlotCount(props.bracket.freeSlotCount, props.bracket.players.length),
 )
-const repechageEntryCount = computed(() =>
-  Math.min(
-    Math.max(1, Number(props.bracket.repechage?.entryCount) || 2),
-    Math.max(1, repechageRequirements.value.playerCount || 1),
-  ),
+const previewIsError = computed(
+  () => props.bracket.format === 'free' && props.bracket.players.length > 64,
 )
+const firstRoundPreviewText = computed(() => {
+  const total = props.bracket.players.length
+  if (total < 2) return ''
+  if (props.bracket.format === 'prelim') {
+    if (total < 3) return '預賽模式至少需要 3 位參賽者'
+    const plan = getPrelimPlan(total, props.bracket.prelimGroupSize)
+    const sizeCounts = new Map()
+    plan.groupSizes.forEach((size) => sizeCounts.set(size, (sizeCounts.get(size) ?? 0) + 1))
+    const sizeSummary = [...sizeCounts.entries()]
+      .sort((a, b) => b[0] - a[0])
+      .map(([size, count]) => `${size} 人×${count} 組`)
+      .join('、')
+    return `${total} 人：預賽 ${plan.groupCount} 組循環（${sizeSummary}）共 ${plan.matchCount} 場、每人至少打 ${plan.minMatchesPerPlayer} 場 → ${plan.knockoutSize} 強淘汰賽（零輪空）`
+  }
+  if (props.bracket.format === 'free') {
+    if (total > 64) return `自由編排最多 64 格，目前 ${total} 人超出上限，請減少參賽人數`
+    const slotCount = effectiveFreeSlotCount.value
+    const emptyCount = slotCount - total
+    return emptyCount
+      ? `${total} 人排入 ${slotCount} 格：${emptyCount} 格空位待填（可於對戰頁填人、確認輪空，或讓第一輪敗者再戰）`
+      : `${total} 人剛好填滿 ${slotCount} 格，無空位`
+  }
+  const { slotCount, groups } = getFirstRoundPreview(total, props.bracket.groupCount)
+  if (groups.length === 1) {
+    const [group] = groups
+    const byeText = group.byeCount ? `${group.byeCount} 人輪空晉級` : '無人輪空'
+    return `${total} 人開 ${slotCount} 格：第一輪 ${group.matchCount} 場對戰、${byeText}`
+  }
+  const parts = groups.map((group) =>
+    group.playerCount
+      ? `${group.label} 組 ${group.playerCount} 人（${group.matchCount} 場對戰、${group.byeCount} 人輪空）`
+      : `${group.label} 組 0 人`,
+  )
+  return `${total} 人分 ${groups.length} 組、每組 ${slotCount} 格：${parts.join('、')}`
+})
 
 watch(
   () => props.bracket.players.length,
@@ -182,36 +220,62 @@ function closeCsvColumnPicker() {
       />
     </label>
 
-    <div class="setup-grid">
-      <div class="field setup-control-card participant-import-card">
-        <label for="player-count-input">參賽人數</label>
-        <div class="player-count-row">
-          <input
-            id="player-count-input"
-            v-model.number="playerCount"
-            type="number"
-            min="2"
-            @change="applyPlayerCount"
-          />
-        </div>
-        <div class="csv-actions">
-          <input
-            ref="csvInputRef"
-            class="sr-only-input"
-            type="file"
-            accept=".csv,text/csv"
-            @change="handleCsvImport"
-          />
-          <button type="button" class="secondary-action csv-import-button" @click="csvInputRef?.click()">
-            匯入參賽名單(.csv)
-          </button>
-          <button type="button" class="secondary-action csv-help-button" @click="showCsvHelp = true">
-            如何取得.csv
-          </button>
-        </div>
+    <div class="field setup-format-field">
+      <span>賽制</span>
+      <div class="format-card-grid" role="radiogroup" aria-label="賽制">
+        <button
+          v-for="option in FORMAT_OPTIONS"
+          :key="option.value"
+          type="button"
+          class="format-card"
+          :class="{ active: bracket.format === option.value }"
+          role="radio"
+          :aria-checked="bracket.format === option.value"
+          @click="emit('set-format', option.value)"
+        >
+          <strong>{{ option.label }}</strong>
+          <p>{{ option.description }}</p>
+        </button>
       </div>
+    </div>
 
-      <div class="field setup-control-card group-count-card">
+    <div class="field setup-control-card format-settings-card">
+      <template v-if="bracket.format === 'prelim'">
+        <span>預賽每組人數</span>
+        <div class="segmented group-count-control" role="radiogroup" aria-label="預賽每組人數">
+          <button
+            v-for="size in PRELIM_GROUP_SIZE_OPTIONS"
+            :key="size"
+            type="button"
+            :class="{ active: bracket.prelimGroupSize === size }"
+            @click="emit('set-prelim-group-size', size)"
+          >
+            約 {{ size }} 人
+          </button>
+        </div>
+        <p class="format-settings-hint">
+          各組打完循環賽後，第 1 名（不足時補成績最佳的第 2 名）晉級淘汰賽。
+        </p>
+      </template>
+      <template v-else-if="bracket.format === 'free'">
+        <span>對戰格數</span>
+        <div class="segmented group-count-control free-slot-count-control" role="radiogroup" aria-label="對戰格數">
+          <button
+            v-for="count in FREE_SLOT_COUNT_OPTIONS"
+            :key="count"
+            type="button"
+            :class="{ active: effectiveFreeSlotCount === count }"
+            :disabled="count < bracket.players.length"
+            @click="emit('set-free-slot-count', count)"
+          >
+            {{ count }} 格
+          </button>
+        </div>
+        <p class="format-settings-hint">
+          名單先排入且左右平均分佈；空格待填的對戰顯示「待定」，可於對戰頁填人或確認輪空。
+        </p>
+      </template>
+      <template v-else>
         <span>分組數</span>
         <div class="segmented group-count-control" role="radiogroup" aria-label="分組數">
           <button
@@ -224,184 +288,144 @@ function closeCsvColumnPicker() {
             {{ count === 1 ? '不分組' : `${count} 組` }}
           </button>
         </div>
-      </div>
-    </div>
-
-    <ul v-if="importErrors.length" class="error-list">
-      <li v-for="error in importErrors" :key="error">{{ error }}</li>
-    </ul>
-    <p v-else-if="importSummary" class="import-summary">{{ importSummary }}</p>
-
-    <div class="player-editor-toolbar">
-      <div>
-        <strong>參賽名單</strong>
-        <span>移除會保留原編號，需要時再手動重新排序。有填稱號的選手，對戰表會顯示稱號。</span>
-      </div>
-      <button type="button" class="secondary-action reseed-button" @click="emit('reorder-player-seeds')">
-        重新排序參賽編號
-      </button>
-      <div class="segmented pairing-mode-control" role="radiogroup" aria-label="配對方式">
-        <button
-          type="button"
-          :class="{ active: bracket.pairingMode === 'order' }"
-          @click="emit('set-pairing-mode', 'order')"
-        >
-          依序配對
-        </button>
-        <button
-          type="button"
-          :class="{ active: bracket.pairingMode === 'random' }"
-          @click="emit('set-pairing-mode', 'random')"
-        >
-          隨機抽籤
-        </button>
-        <button
-          type="button"
-          class="shuffle-seeds-button"
-          @click="emit('shuffle-player-seeds')"
-        >
-          隨機重排編號
-        </button>
-      </div>
-    </div>
-
-    <div class="player-editor">
-      <div class="player-editor-head">
-        <span>編號</span>
-        <span>選手姓名</span>
-        <span>稱號</span>
-        <span>確認</span>
-        <span>移除</span>
-      </div>
-      <div v-for="player in bracket.players" :key="player.id" class="player-row">
-        <span class="seed-display">#{{ player.seed }}</span>
-        <input
-          :value="player.name"
-          type="text"
-          @input="emit('update-player', player.id, { name: $event.target.value })"
-        />
-        <input
-          :value="player.title"
-          type="text"
-          placeholder="選填"
-          @input="emit('update-player', player.id, { title: $event.target.value })"
-        />
-        <button
-          type="button"
-          class="registration-check"
-          :class="{ active: player.registrationConfirmed }"
-          :aria-pressed="Boolean(player.registrationConfirmed)"
-          :aria-label="player.registrationConfirmed ? `取消確認 ${player.name}` : `確認報名 ${player.name}`"
-          @click="emit('update-player', player.id, { registrationConfirmed: !player.registrationConfirmed })"
-        >
-          ✓
-        </button>
-        <button
-          type="button"
-          class="remove-player-button"
-          :disabled="bracket.players.length <= 2"
-          :aria-label="`移除 ${player.name}`"
-          @click="emit('remove-player', player.id)"
-        >
-          移除
-        </button>
-      </div>
-    </div>
-
-    <ul v-if="submitErrors.length" class="error-list">
-      <li v-for="error in submitErrors" :key="error">{{ error }}</li>
-    </ul>
-
-    <div class="setup-bottom-actions">
-      <button type="button" class="secondary-action add-player-button" @click="emit('add-player')">
-        +1 新增參賽者
-      </button>
-    </div>
-
-    <button type="button" class="primary-action" @click="generate">產生對戰表</button>
-
-    <section class="repechage-setup-card">
-      <div class="repechage-setup-copy">
-        <span>敗部復活模式</span>
-        <strong>{{ bracket.repechage?.enabled ? '已啟用' : '未啟用' }}</strong>
-        <p>
-          系統只會在同一支線原本會連續輪空兩次時啟動，第一輪完成後依設定名額安插第一輪敗者。
+        <p class="format-settings-hint">
+          分組後各組先各自打出冠軍，再進入總決賽區交叉對戰。
         </p>
-      </div>
-      <div class="repechage-setup-controls">
-        <button
-          type="button"
-          class="repechage-toggle"
-          :class="{ active: bracket.repechage?.enabled }"
-          @click="emit('set-repechage-enabled', !bracket.repechage?.enabled)"
-        >
-          <span class="repechage-toggle-track" aria-hidden="true">
-            <span></span>
-          </span>
-          <span>{{ bracket.repechage?.enabled ? '已啟用敗部復活' : '啟用敗部復活' }}</span>
-        </button>
-        <div class="segmented repechage-mode-control" role="radiogroup" aria-label="敗部復活選人方式">
+      </template>
+    </div>
+
+    <section class="setup-participants">
+      <div class="setup-grid">
+        <div class="field setup-control-card participant-import-card">
+          <label for="player-count-input">參賽人數</label>
+          <div class="player-count-row">
+            <input
+              id="player-count-input"
+              v-model.number="playerCount"
+              type="number"
+              min="2"
+              @change="applyPlayerCount"
+            />
+          </div>
+          <div class="csv-actions">
+            <input
+              ref="csvInputRef"
+              class="sr-only-input"
+              type="file"
+              accept=".csv,text/csv"
+              @change="handleCsvImport"
+            />
+            <button type="button" class="secondary-action csv-import-button" @click="csvInputRef?.click()">
+              匯入參賽名單(.csv)
+            </button>
+            <button type="button" class="secondary-action csv-help-button" @click="showCsvHelp = true">
+              如何取得.csv
+            </button>
+          </div>
+        </div>
+
+        <div class="field setup-control-card pairing-card">
+          <span>配對方式</span>
+          <div class="segmented pairing-mode-control" role="radiogroup" aria-label="配對方式">
+            <button
+              type="button"
+              :class="{ active: bracket.pairingMode === 'order' }"
+              @click="emit('set-pairing-mode', 'order')"
+            >
+              依序配對
+            </button>
+            <button
+              type="button"
+              :class="{ active: bracket.pairingMode === 'random' }"
+              @click="emit('set-pairing-mode', 'random')"
+            >
+              隨機抽籤
+            </button>
+          </div>
           <button
             type="button"
-            :disabled="!bracket.repechage?.enabled"
-            :class="{ active: (bracket.repechage?.selectionMode ?? 'random') === 'random' }"
-            @click="emit('set-repechage-selection-mode', 'random')"
+            class="secondary-action shuffle-seeds-button"
+            @click="emit('shuffle-player-seeds')"
           >
-            隨機抽選
-          </button>
-          <button
-            type="button"
-            :disabled="!bracket.repechage?.enabled"
-            :class="{ active: bracket.repechage?.selectionMode === 'manual' }"
-            @click="emit('set-repechage-selection-mode', 'manual')"
-          >
-            手動指定
+            隨機重排編號
           </button>
         </div>
       </div>
-      <label class="repechage-entry-field">
-        <span>復活名額</span>
-        <input
-          :value="repechageEntryCount"
-          type="number"
-          min="1"
-          :max="Math.max(1, repechageRequirements.playerCount)"
-          :disabled="!bracket.repechage?.enabled || !repechageRequirements.playerCount"
-          @change="emit('set-repechage-entry-count', $event.target.value)"
-        />
-      </label>
-      <div class="repechage-requirement">
-        <template v-if="repechageRequirements.matchCount">
-          最多可安插
-          <strong>{{ repechageRequirements.playerCount }}</strong>
-          位第一輪敗者；目前設定
-          <strong>{{ repechageEntryCount }}</strong>
-          位。
-        </template>
-        <template v-else>
-          目前賽程不會連續輪空，無需建立敗部復活賽。
-        </template>
-      </div>
-      <button
-        type="button"
-        class="repechage-explainer-toggle"
-        :aria-expanded="showRepechageExplainer"
-        @click="showRepechageExplainer = !showRepechageExplainer"
-      >
-        <span>{{ showRepechageExplainer ? '收合規則說明' : '查看規則說明' }}</span>
-        <strong>{{ showRepechageExplainer ? '−' : '+' }}</strong>
+
+      <ul v-if="importErrors.length" class="error-list">
+        <li v-for="error in importErrors" :key="error">{{ error }}</li>
+      </ul>
+      <p v-else-if="importSummary" class="import-summary">{{ importSummary }}</p>
+
+      <p v-if="firstRoundPreviewText" class="first-round-preview" :class="{ error: previewIsError }">
+        {{ firstRoundPreviewText }}
+      </p>
+
+      <ul v-if="submitErrors.length" class="error-list">
+        <li v-for="error in submitErrors" :key="error">{{ error }}</li>
+      </ul>
+
+      <button type="button" class="primary-action" :disabled="previewIsError" @click="generate">
+        產生對戰表
       </button>
-      <div v-if="showRepechageExplainer" class="repechage-explainer">
-        <strong>出現條件</strong>
-        <p>
-          敗部復活只會在某位選手或某條支線原本會連續輪空兩次時出現。
-          這時系統會等第一輪全部完成後，依照復活名額從第一輪敗者中挑選選手，安插到第一輪後面的空位。
-        </p>
-        <strong>不會出現的情況</strong>
-        <p>
-          如果賽程沒有連續輪空兩次，或只是一般的一次輪空，就算啟用敗部復活也不會產生復活賽。
-          這個模式不是每場比賽都會固定增加敗部賽，只用來修正連續輪空造成的不公平。
-        </p>
+
+      <div class="player-editor-toolbar">
+        <div>
+          <strong>參賽名單</strong>
+          <span>移除會保留原編號，需要時再手動重新排序。有填稱號的選手，對戰表會顯示稱號。</span>
+        </div>
+        <button type="button" class="secondary-action reseed-button" @click="emit('reorder-player-seeds')">
+          重新排序參賽編號
+        </button>
+      </div>
+
+      <div class="player-editor">
+        <div class="player-editor-head">
+          <span>編號</span>
+          <span>選手姓名</span>
+          <span>稱號</span>
+          <span>確認</span>
+          <span>移除</span>
+        </div>
+        <div v-for="player in bracket.players" :key="player.id" class="player-row">
+          <span class="seed-display">#{{ player.seed }}</span>
+          <input
+            :value="player.name"
+            type="text"
+            @input="emit('update-player', player.id, { name: $event.target.value })"
+          />
+          <input
+            :value="player.title"
+            type="text"
+            placeholder="選填"
+            @input="emit('update-player', player.id, { title: $event.target.value })"
+          />
+          <button
+            type="button"
+            class="registration-check"
+            :class="{ active: player.registrationConfirmed }"
+            :aria-pressed="Boolean(player.registrationConfirmed)"
+            :aria-label="player.registrationConfirmed ? `取消確認 ${player.name}` : `確認報名 ${player.name}`"
+            @click="emit('update-player', player.id, { registrationConfirmed: !player.registrationConfirmed })"
+          >
+            ✓
+          </button>
+          <button
+            type="button"
+            class="remove-player-button"
+            :disabled="bracket.players.length <= 2"
+            :aria-label="`移除 ${player.name}`"
+            @click="emit('remove-player', player.id)"
+          >
+            移除
+          </button>
+        </div>
+      </div>
+
+      <div class="setup-bottom-actions">
+        <button type="button" class="secondary-action add-player-button" @click="emit('add-player')">
+          +1 新增參賽者
+        </button>
       </div>
     </section>
   </section>

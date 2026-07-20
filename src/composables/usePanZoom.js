@@ -78,6 +78,33 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
     hasManualViewChange.value = true
   }
 
+  function getViewState() {
+    return {
+      scale: scale.value,
+      translateX: translateX.value,
+      translateY: translateY.value,
+      hasManualViewChange: hasManualViewChange.value,
+    }
+  }
+
+  async function restoreViewState(state) {
+    if (
+      !state ||
+      !Number.isFinite(state.scale) ||
+      !Number.isFinite(state.translateX) ||
+      !Number.isFinite(state.translateY)
+    ) {
+      return false
+    }
+    stopViewTween()
+    await nextTick()
+    scale.value = clamp(state.scale)
+    translateX.value = state.translateX
+    translateY.value = state.translateY
+    hasManualViewChange.value = Boolean(state.hasManualViewChange)
+    return true
+  }
+
   async function fitToView({ force = true } = {}) {
     if (!force && hasManualViewChange.value) return
     stopViewTween()
@@ -254,6 +281,8 @@ export function usePanZoom(viewportRef, contentRef, boardRef) {
     zoomIn,
     zoomOut,
     resetView,
+    getViewState,
+    restoreViewState,
     fitToView,
     focusRect,
     onPointerDown,

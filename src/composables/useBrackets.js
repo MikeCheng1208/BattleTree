@@ -1,24 +1,38 @@
 import { computed } from 'vue'
 import { useStorage } from '@vueuse/core'
+import { DEFAULT_BRACKET_FORMAT } from '../constants/bracketOptions'
 import {
-  analyzeRepechageInsertionTargets,
   buildInitialPlayers,
+  createFreeSlots,
   createGroupedSlots,
   createId,
   deriveRounds,
+  FREE_SLOT_COUNT_OPTIONS,
   getFirstRoundState,
-  getRepechageRequirements,
-  REPECHAGE_MATCH_PREFIX,
+  getGroupLabel,
+  normalizeFreeSlotCount,
   sanitizeResults,
   shufflePlayers,
   THIRD_PLACE_MATCH_ID,
   validatePlayers,
 } from './useBracketEngine'
+import {
+  createPrelimGroups,
+  createPrelimKnockoutSlots,
+  getPrelimQualification,
+  normalizePrelimGroupSize,
+} from './usePrelimEngine'
 
 const STORAGE_BRACKETS = 'battletree:brackets'
 const STORAGE_CURRENT_ID = 'battletree:currentId'
+const STORAGE_OPEN_TABS = 'battletree:openTabs'
 const DEFAULT_PLAYER_COUNT = 4
+const BRACKET_FORMATS = new Set(['free', 'single', 'prelim'])
 const GROUP_COUNT_OPTIONS = [1, 2, 4, 8]
+
+function normalizeFormat(format) {
+  return BRACKET_FORMATS.has(format) ? format : DEFAULT_BRACKET_FORMAT
+}
 
 function normalizeGroupCount(count, playerCount = Infinity) {
   const requested = Number(count) || 1
@@ -36,28 +50,6 @@ function createLotteryState() {
   }
 }
 
-function createRepechageState() {
-  return {
-    enabled: false,
-    selectionMode: 'random',
-    entryCount: 2,
-    targets: [],
-    selectedPlayerIds: [],
-    matches: [],
-  }
-}
-
-function hasRepechageStarted(bracket) {
-  return (
-    (bracket.repechage?.matches ?? []).some(
-      (match) => bracket.results?.[match.id]?.winnerSlot !== undefined,
-    ) ||
-    (bracket.repechage?.targets ?? []).some(
-      (target) => bracket.results?.[`r${target.targetRoundIndex}-m${target.targetMatchIndex}`]?.winnerSlot !== undefined,
-    )
-  )
-}
-
 function createBracket(overrides = {}) {
   const now = Date.now()
   return {
@@ -69,11 +61,16 @@ function createBracket(overrides = {}) {
     status: 'setup',
     players: buildInitialPlayers(DEFAULT_PLAYER_COUNT),
     pairingMode: 'order',
+    format: DEFAULT_BRACKET_FORMAT,
+    prelimGroupSize: 3,
+    prelim: null,
+    freeSlotCount: 8,
+    byeSlots: [],
+    refillSlots: [],
     groupCount: 1,
     bracketSize: DEFAULT_PLAYER_COUNT,
     slots: [],
     results: {},
-    repechage: createRepechageState(),
     lottery: createLotteryState(),
     ...overrides,
   }
@@ -103,16 +100,6 @@ function normalizeBracket(bracket) {
     players,
     slots: Array.isArray(bracket?.slots) ? bracket.slots : [],
     results: bracket?.results && typeof bracket.results === 'object' ? bracket.results : {},
-    repechage: {
-      ...createRepechageState(),
-      ...(bracket?.repechage ?? {}),
-      entryCount: Math.max(1, Number(bracket?.repechage?.entryCount) || 2),
-      targets: Array.isArray(bracket?.repechage?.targets) ? bracket.repechage.targets : [],
-      selectedPlayerIds: Array.isArray(bracket?.repechage?.selectedPlayerIds)
-        ? bracket.repechage.selectedPlayerIds
-        : [],
-      matches: Array.isArray(bracket?.repechage?.matches) ? bracket.repechage.matches : [],
-    },
     lottery: {
       ...createLotteryState(),
       ...(bracket?.lottery ?? {}),
@@ -120,7 +107,78 @@ function normalizeBracket(bracket) {
   }
   normalized.bracketSize = normalized.slots.length || normalized.bracketSize || normalized.players.length
   normalized.groupCount = normalizeGroupCount(normalized.groupCount, normalized.players.length)
+  normalized.format = normalizeFormat(bracket?.format)
+  normalized.prelimGroupSize = normalizePrelimGroupSize(bracket?.prelimGroupSize)
+  normalized.prelim =
+    bracket?.prelim && Array.isArray(bracket.prelim.groups) && bracket.prelim.groups.length
+      ? {
+          groupSize: normalizePrelimGroupSize(bracket.prelim.groupSize),
+          groups: bracket.prelim.groups.map((group, index) => ({
+            label: group?.label || getGroupLabel(index),
+            playerIds: Array.isArray(group?.playerIds) ? group.playerIds : [],
+          })),
+          results:
+            bracket.prelim.results && typeof bracket.prelim.results === 'object' ? bracket.prelim.results : {},
+        }
+      : null
+  if (normalized.status === 'prelim' && (normalized.format !== 'prelim' || !normalized.prelim)) {
+    normalized.status = 'setup'
+  }
+  normalized.freeSlotCount = normalizeFreeSlotCount(bracket?.freeSlotCount, normalized.players.length)
+  const cleanSlotIndexes = (list) =>
+    normalized.format === 'free' && Array.isArray(list)
+      ? [
+          ...new Set(
+            list
+              .map(Number)
+              .filter((index) => Number.isInteger(index) && index >= 0 && index < normalized.slots.length),
+          ),
+        ]
+      : []
+  normalized.byeSlots = cleanSlotIndexes(bracket?.byeSlots)
+  normalized.refillSlots = cleanSlotIndexes(bracket?.refillSlots)
+  if (normalized.format === 'free') normalized.groupCount = 1
+  delete normalized.repechage
   return normalized
+}
+
+// 自由編排：改判第一輪結果後，檢查被填入空格的敗者是否仍具敗者身分，否則清回待定
+function releaseInvalidRefills(bracket) {
+  const refillSlots = bracket.refillSlots ?? []
+  if (bracket.format !== 'free' || !refillSlots.length) return bracket
+
+  const firstRound = deriveRounds(bracket)[0] ?? []
+  const slots = [...bracket.slots]
+  const keptRefills = []
+  let changed = false
+
+  refillSlots.forEach((index) => {
+    const playerId = slots[index]
+    if (!playerId) {
+      changed = true
+      return
+    }
+    const otherIndexes = slots
+      .map((id, slotIndex) => (id === playerId && slotIndex !== index ? slotIndex : -1))
+      .filter((slotIndex) => slotIndex >= 0)
+    if (!otherIndexes.length) {
+      keptRefills.push(index)
+      return
+    }
+    const stillLoser = otherIndexes.some((slotIndex) => {
+      const match = firstRound[Math.floor(slotIndex / 2)]
+      return match?.isPlayable && match.winnerId && match.winnerId !== playerId
+    })
+    if (stillLoser) {
+      keptRefills.push(index)
+    } else {
+      slots[index] = null
+      changed = true
+    }
+  })
+
+  if (!changed) return { ...bracket, refillSlots: keptRefills }
+  return { ...bracket, slots, refillSlots: keptRefills }
 }
 
 export function useBrackets() {
@@ -128,17 +186,26 @@ export function useBrackets() {
     mergeDefaults: true,
   })
   const currentId = useStorage(STORAGE_CURRENT_ID, null)
+  const hadOpenTabsStorage = localStorage.getItem(STORAGE_OPEN_TABS) !== null
+  const openTabIds = useStorage(STORAGE_OPEN_TABS, [])
 
   function ensureInitialBracket() {
     const ids = Object.keys(brackets.value)
-    if (ids.length && currentId.value && brackets.value[currentId.value]) return
-    if (ids.length) {
-      currentId.value = ids[0]
-      return
-    }
+    if (ids.length) return
     const bracket = createBracket()
     brackets.value = { [bracket.id]: bracket }
-    currentId.value = bracket.id
+  }
+
+  function normalizeOpenTabs() {
+    const bracketIds = Object.keys(brackets.value)
+    const validIds = new Set(bracketIds)
+    const sourceIds = hadOpenTabsStorage
+      ? openTabIds.value
+      : [currentId.value && validIds.has(currentId.value) ? currentId.value : bracketIds[0]].filter(Boolean)
+    openTabIds.value = [...new Set(Array.isArray(sourceIds) ? sourceIds : [])].filter((id) => validIds.has(id))
+    if (!openTabIds.value.includes(currentId.value)) {
+      currentId.value = openTabIds.value[0] ?? null
+    }
   }
 
   function normalizeAll() {
@@ -149,6 +216,7 @@ export function useBrackets() {
     })
     brackets.value = normalized
     ensureInitialBracket()
+    normalizeOpenTabs()
   }
 
   normalizeAll()
@@ -157,6 +225,13 @@ export function useBrackets() {
     Object.values(brackets.value)
       .map(normalizeBracket)
       .sort((a, b) => b.updatedAt - a.updatedAt),
+  )
+
+  const openBrackets = computed(() =>
+    openTabIds.value
+      .map((id) => brackets.value[id])
+      .filter(Boolean)
+      .map(normalizeBracket),
   )
 
   const currentBracket = computed(() => {
@@ -181,28 +256,87 @@ export function useBrackets() {
     persist(next)
   }
 
-  function addBracket() {
-    const bracket = createBracket()
-    brackets.value = { ...brackets.value, [bracket.id]: bracket }
-    currentId.value = bracket.id
+  function renameBracket(id, name) {
+    const bracket = brackets.value[id]
+    const nextName = typeof name === 'string' ? name.trim() : ''
+    if (!bracket || !nextName) return false
+    persist({ ...normalizeBracket(bracket), name: nextName })
+    return true
   }
 
-  function selectBracket(id) {
-    if (brackets.value[id]) currentId.value = id
+  function getUniqueBracketName() {
+    const names = new Set(Object.values(brackets.value).map((bracket) => bracket.name))
+    if (!names.has('新對戰表')) return '新對戰表'
+    let suffix = 2
+    while (names.has(`新對戰表 ${suffix}`)) suffix += 1
+    return `新對戰表 ${suffix}`
+  }
+
+  function addBracket(
+    {
+      name = '',
+      format = DEFAULT_BRACKET_FORMAT,
+      rosterSource = 'blank',
+      sourceBracketId = currentId.value,
+    } = {},
+  ) {
+    const sourceBracket = rosterSource === 'current' ? brackets.value[sourceBracketId] : null
+    const copiedPlayers = sourceBracket
+      ? normalizeBracket(sourceBracket).players.map((player) => ({
+          id: createId('player'),
+          name: player.name,
+          title: player.title,
+          seed: player.seed,
+          registrationConfirmed: player.registrationConfirmed,
+        }))
+      : null
+    const bracket = createBracket({
+      name: typeof name === 'string' && name.trim() ? name.trim() : getUniqueBracketName(),
+      format: normalizeFormat(format),
+      ...(copiedPlayers ? { players: copiedPlayers } : {}),
+    })
+    brackets.value = { ...brackets.value, [bracket.id]: bracket }
+    openTabIds.value = [...openTabIds.value.filter((id) => id !== bracket.id), bracket.id]
+    currentId.value = bracket.id
+    return bracket.id
+  }
+
+  function openBracketTab(id) {
+    if (!brackets.value[id]) return false
+    if (!openTabIds.value.includes(id)) openTabIds.value = [...openTabIds.value, id]
+    currentId.value = id
+    return true
+  }
+
+  function closeBracketTab(id) {
+    const index = openTabIds.value.indexOf(id)
+    if (index === -1) return currentId.value
+    const nextOpenIds = openTabIds.value.filter((tabId) => tabId !== id)
+    openTabIds.value = nextOpenIds
+    if (currentId.value === id) {
+      currentId.value = nextOpenIds[index] ?? nextOpenIds[index - 1] ?? null
+    }
+    return currentId.value
   }
 
   function deleteBracket(id = currentId.value) {
     if (!id || !brackets.value[id]) return
+    const deletedTabIndex = openTabIds.value.indexOf(id)
     const next = { ...brackets.value }
     delete next[id]
     brackets.value = next
+    const nextOpenIds = openTabIds.value.filter((tabId) => tabId !== id)
+    openTabIds.value = nextOpenIds
 
     const ids = Object.keys(next)
     if (!ids.length) {
       addBracket()
       return
     }
-    if (currentId.value === id) currentId.value = ids[0]
+    if (currentId.value === id) {
+      currentId.value =
+        nextOpenIds[deletedTabIndex] ?? nextOpenIds[deletedTabIndex - 1] ?? nextOpenIds[0] ?? null
+    }
   }
 
   function resetCurrentBracket() {
@@ -238,12 +372,8 @@ export function useBrackets() {
         groupCount: normalizeGroupCount(bracket.groupCount, players.length),
         slots: [],
         results: {},
-        repechage: {
-          ...createRepechageState(),
-          enabled: bracket.repechage?.enabled ?? false,
-          selectionMode: bracket.repechage?.selectionMode ?? 'random',
-          entryCount: bracket.repechage?.entryCount ?? 2,
-        },
+        byeSlots: [],
+        refillSlots: [],
         lottery: createLotteryState(),
       }
     })
@@ -269,12 +399,8 @@ export function useBrackets() {
         groupCount: normalizeGroupCount(bracket.groupCount, players.length),
         slots: [],
         results: {},
-        repechage: {
-          ...createRepechageState(),
-          enabled: bracket.repechage?.enabled ?? false,
-          selectionMode: bracket.repechage?.selectionMode ?? 'random',
-          entryCount: bracket.repechage?.entryCount ?? 2,
-        },
+        byeSlots: [],
+        refillSlots: [],
         lottery: createLotteryState(),
       }
     })
@@ -306,12 +432,8 @@ export function useBrackets() {
         groupCount: normalizeGroupCount(bracket.groupCount, players.length),
         slots: [],
         results: {},
-        repechage: {
-          ...createRepechageState(),
-          enabled: bracket.repechage?.enabled ?? false,
-          selectionMode: bracket.repechage?.selectionMode ?? 'random',
-          entryCount: bracket.repechage?.entryCount ?? 2,
-        },
+        byeSlots: [],
+        refillSlots: [],
         lottery: createLotteryState(),
       }
     })
@@ -324,15 +446,8 @@ export function useBrackets() {
       status: bracket.status === 'ready' ? 'setup' : bracket.status,
       slots: bracket.status === 'ready' ? [] : bracket.slots,
       results: bracket.status === 'ready' ? {} : bracket.results,
-      repechage:
-        bracket.status === 'ready'
-          ? {
-              ...createRepechageState(),
-              enabled: bracket.repechage?.enabled ?? false,
-              selectionMode: bracket.repechage?.selectionMode ?? 'random',
-              entryCount: bracket.repechage?.entryCount ?? 2,
-            }
-          : bracket.repechage,
+      byeSlots: bracket.status === 'ready' ? [] : bracket.byeSlots,
+      refillSlots: bracket.status === 'ready' ? [] : bracket.refillSlots,
     }))
   }
 
@@ -347,12 +462,8 @@ export function useBrackets() {
         groupCount: normalizeGroupCount(bracket.groupCount, players.length),
         slots: [],
         results: {},
-        repechage: {
-          ...createRepechageState(),
-          enabled: bracket.repechage?.enabled ?? false,
-          selectionMode: bracket.repechage?.selectionMode ?? 'random',
-          entryCount: bracket.repechage?.entryCount ?? 2,
-        },
+        byeSlots: [],
+        refillSlots: [],
         lottery: createLotteryState(),
       }
     })
@@ -368,12 +479,8 @@ export function useBrackets() {
       })),
       slots: [],
       results: {},
-      repechage: {
-        ...createRepechageState(),
-        enabled: bracket.repechage?.enabled ?? false,
-        selectionMode: bracket.repechage?.selectionMode ?? 'random',
-        entryCount: bracket.repechage?.entryCount ?? 2,
-      },
+      byeSlots: [],
+      refillSlots: [],
       lottery: createLotteryState(),
     }))
   }
@@ -391,12 +498,8 @@ export function useBrackets() {
         players,
         slots: [],
         results: {},
-        repechage: {
-          ...createRepechageState(),
-          enabled: bracket.repechage?.enabled ?? false,
-          selectionMode: bracket.repechage?.selectionMode ?? 'random',
-          entryCount: bracket.repechage?.entryCount ?? 2,
-        },
+        byeSlots: [],
+        refillSlots: [],
         lottery: createLotteryState(),
       }
     })
@@ -409,15 +512,8 @@ export function useBrackets() {
       status: bracket.status === 'ready' ? 'setup' : bracket.status,
       slots: bracket.status === 'ready' ? [] : bracket.slots,
       results: bracket.status === 'ready' ? {} : bracket.results,
-      repechage:
-        bracket.status === 'ready'
-          ? {
-              ...createRepechageState(),
-              enabled: bracket.repechage?.enabled ?? false,
-              selectionMode: bracket.repechage?.selectionMode ?? 'random',
-              entryCount: bracket.repechage?.entryCount ?? 2,
-            }
-          : bracket.repechage,
+      byeSlots: bracket.status === 'ready' ? [] : bracket.byeSlots,
+      refillSlots: bracket.status === 'ready' ? [] : bracket.refillSlots,
     }))
   }
 
@@ -428,61 +524,61 @@ export function useBrackets() {
       status: bracket.status === 'ready' ? 'setup' : bracket.status,
       slots: bracket.status === 'ready' ? [] : bracket.slots,
       results: bracket.status === 'ready' ? {} : bracket.results,
-      repechage:
-        bracket.status === 'ready'
-          ? {
-              ...createRepechageState(),
-              enabled: bracket.repechage?.enabled ?? false,
-              selectionMode: bracket.repechage?.selectionMode ?? 'random',
-              entryCount: bracket.repechage?.entryCount ?? 2,
-            }
-          : bracket.repechage,
     }))
   }
 
-  function setRepechageEnabled(enabled) {
+  function setFormat(format) {
+    const normalizedFormat = normalizeFormat(format)
     updateCurrent((bracket) => ({
       ...bracket,
-      status: bracket.status === 'ready' ? 'setup' : bracket.status,
-      slots: bracket.status === 'ready' ? [] : bracket.slots,
-      results: bracket.status === 'ready' ? {} : bracket.results,
-      repechage: {
-        ...createRepechageState(),
-        enabled: Boolean(enabled),
-        selectionMode: bracket.repechage?.selectionMode ?? 'random',
-        entryCount: bracket.repechage?.entryCount ?? 2,
-      },
+      format: normalizedFormat,
+      status: 'setup',
+      slots: [],
+      results: {},
+      prelim: null,
+      byeSlots: [],
+      refillSlots: [],
+      groupCount: normalizedFormat === 'free' ? 1 : bracket.groupCount,
+      lottery: createLotteryState(),
     }))
   }
 
-  function setRepechageEntryCount(entryCount) {
+  function setPrelimGroupSize(groupSize) {
     updateCurrent((bracket) => ({
       ...bracket,
-      repechage: {
-        ...bracket.repechage,
-        entryCount: Math.max(1, Number(entryCount) || 1),
-        selectedPlayerIds: [],
-        matches: [],
-      },
-      results: Object.fromEntries(
-        Object.entries(bracket.results ?? {}).filter(([id]) => !id.startsWith(REPECHAGE_MATCH_PREFIX)),
-      ),
+      prelimGroupSize: normalizePrelimGroupSize(groupSize),
+      status: 'setup',
+      slots: [],
+      results: {},
+      prelim: null,
+      lottery: createLotteryState(),
     }))
   }
 
-  function setRepechageSelectionMode(selectionMode) {
-    updateCurrent((bracket) => ({
-      ...bracket,
-      repechage: {
-        ...bracket.repechage,
-        selectionMode: selectionMode === 'manual' ? 'manual' : 'random',
-        selectedPlayerIds: [],
-        matches: [],
-      },
-      results: Object.fromEntries(
-        Object.entries(bracket.results ?? {}).filter(([id]) => !id.startsWith(REPECHAGE_MATCH_PREFIX)),
-      ),
+  function setFreeSlotCount(count) {
+    const bracket = currentBracket.value
+    if (!bracket) return { ok: false, errors: ['找不到目前對戰表'] }
+    const requested = Number(count)
+    if (!FREE_SLOT_COUNT_OPTIONS.includes(requested)) {
+      return { ok: false, errors: ['對戰格數僅支援 8／16／32／64'] }
+    }
+    if (bracket.players.length > requested) {
+      return {
+        ok: false,
+        errors: [`參賽人數 ${bracket.players.length} 人超過 ${requested} 格，請選更大的格數或減少人數`],
+      }
+    }
+    updateCurrent((current) => ({
+      ...current,
+      freeSlotCount: requested,
+      status: 'setup',
+      slots: [],
+      results: {},
+      byeSlots: [],
+      refillSlots: [],
+      lottery: createLotteryState(),
     }))
+    return { ok: true, errors: [] }
   }
 
   function generateBracket(forceMode) {
@@ -492,10 +588,49 @@ export function useBrackets() {
     if (errors.length) return { ok: false, errors }
 
     const pairingMode = forceMode ?? bracket.pairingMode
+
+    if (bracket.format === 'prelim') {
+      if (bracket.players.length < 3) return { ok: false, errors: ['預賽模式至少需要 3 位參賽者'] }
+      const groups = createPrelimGroups(bracket.players, bracket.prelimGroupSize, pairingMode)
+      persist({
+        ...bracket,
+        pairingMode,
+        status: 'prelim',
+        slots: [],
+        results: {},
+        prelim: { groupSize: normalizePrelimGroupSize(bracket.prelimGroupSize), groups, results: {} },
+        byeSlots: [],
+        refillSlots: [],
+        lottery: createLotteryState(),
+      })
+      return { ok: true, errors: [] }
+    }
+
+    if (bracket.format === 'free') {
+      if (bracket.players.length > 64) {
+        return { ok: false, errors: ['自由編排最多 64 格，請減少參賽人數'] }
+      }
+      const slotCount = normalizeFreeSlotCount(bracket.freeSlotCount, bracket.players.length)
+      const { slots } = createFreeSlots(bracket.players, pairingMode, slotCount)
+      persist({
+        ...bracket,
+        pairingMode,
+        groupCount: 1,
+        freeSlotCount: slotCount,
+        bracketSize: slotCount,
+        slots,
+        byeSlots: [],
+        refillSlots: [],
+        status: 'ready',
+        results: {},
+        prelim: null,
+        lottery: createLotteryState(),
+      })
+      return { ok: true, errors: [] }
+    }
+
     const groupCount = normalizeGroupCount(bracket.groupCount, bracket.players.length)
     const { slotsData } = createGroupedSlots(bracket.players, pairingMode, groupCount)
-    const requirements = getRepechageRequirements(bracket.players, pairingMode, groupCount)
-    const entryCount = Math.max(1, Number(bracket.repechage?.entryCount) || 2)
     persist({
       ...bracket,
       pairingMode,
@@ -504,42 +639,217 @@ export function useBrackets() {
       slots: slotsData.slots,
       status: 'ready',
       results: {},
-      repechage: {
-        ...createRepechageState(),
-        enabled: bracket.repechage?.enabled ?? false,
-        selectionMode: bracket.repechage?.selectionMode ?? 'random',
-        entryCount,
-        targets: bracket.repechage?.enabled ? requirements.targets.slice(0, entryCount) : [],
-      },
+      prelim: null,
+      byeSlots: [],
+      refillSlots: [],
       lottery: createLotteryState(),
     })
     return { ok: true, errors: [] }
+  }
+
+  function setPrelimResult(matchId, winnerSlot, scores = {}) {
+    updateCurrent((bracket) => {
+      if (bracket.status !== 'prelim' || !bracket.prelim) return bracket
+      const current = bracket.prelim.results?.[matchId]
+      const nextResults = { ...bracket.prelim.results }
+      if (current?.winnerSlot === winnerSlot) {
+        delete nextResults[matchId]
+      } else {
+        nextResults[matchId] = {
+          winnerSlot,
+          scoreA: scores.scoreA ?? current?.scoreA ?? null,
+          scoreB: scores.scoreB ?? current?.scoreB ?? null,
+        }
+      }
+      return { ...bracket, prelim: { ...bracket.prelim, results: nextResults } }
+    })
+  }
+
+  function updatePrelimScore(matchId, scoreA, scoreB) {
+    updateCurrent((bracket) => {
+      if (bracket.status !== 'prelim' || !bracket.prelim) return bracket
+      const current = bracket.prelim.results?.[matchId]
+      if (!current) return bracket
+      return {
+        ...bracket,
+        prelim: {
+          ...bracket.prelim,
+          results: {
+            ...bracket.prelim.results,
+            [matchId]: { ...current, scoreA, scoreB },
+          },
+        },
+      }
+    })
+  }
+
+  function generateKnockoutFromPrelim() {
+    const bracket = currentBracket.value
+    if (!bracket || bracket.status !== 'prelim' || !bracket.prelim) {
+      return { ok: false, errors: ['預賽尚未產生'] }
+    }
+    const qualification = getPrelimQualification(bracket.prelim, bracket.players)
+    if (!qualification.complete) return { ok: false, errors: ['預賽尚未全部完成'] }
+
+    const slots = createPrelimKnockoutSlots(qualification.qualifiers)
+    persist({
+      ...bracket,
+      status: 'ready',
+      slots,
+      bracketSize: slots.length,
+      results: {},
+      lottery: createLotteryState(),
+    })
+    return { ok: true, errors: [] }
+  }
+
+  function reopenPrelim() {
+    updateCurrent((bracket) => {
+      if (bracket.format !== 'prelim' || !bracket.prelim) return bracket
+      return { ...bracket, status: 'prelim', slots: [], results: {} }
+    })
+  }
+
+  function applyFreeSlotFill(bracket, slotIndex, playerId) {
+    const index = Number(slotIndex)
+    if (!Number.isInteger(index) || index < 0 || index >= bracket.slots.length) return null
+    if (bracket.slots[index] === playerId) return null
+    const occurrences = bracket.slots.filter((id) => id === playerId).length
+    const isLoser = getFirstRoundState(bracket).loserIds.includes(playerId)
+    if (occurrences > (isLoser ? 1 : 0)) return null
+
+    const slots = [...bracket.slots]
+    const hadPlayer = slots[index] !== null
+    slots[index] = playerId
+    const results = { ...bracket.results }
+    if (hadPlayer) delete results[`r0-m${Math.floor(index / 2)}`]
+    const next = {
+      ...bracket,
+      slots,
+      results,
+      byeSlots: (bracket.byeSlots ?? []).filter((i) => i !== index),
+      refillSlots: [...new Set([...(bracket.refillSlots ?? []), index])],
+    }
+    return { ...next, results: sanitizeResults(next) }
+  }
+
+  function fillFreeSlot(slotIndex, playerId) {
+    updateCurrent((bracket) => {
+      if (bracket.format !== 'free' || bracket.status !== 'ready') return bracket
+      return applyFreeSlotFill(bracket, slotIndex, playerId) ?? bracket
+    })
+  }
+
+  function addAndFillFreeSlot(slotIndex, { name, title = '' } = {}) {
+    updateCurrent((bracket) => {
+      if (bracket.format !== 'free' || bracket.status !== 'ready') return bracket
+      const trimmedName = (name ?? '').trim()
+      if (!trimmedName) return bracket
+      const player = {
+        id: createId('player'),
+        name: trimmedName,
+        title: (title ?? '').trim(),
+        seed: Math.max(0, ...bracket.players.map((item) => Number(item.seed) || 0)) + 1,
+        registrationConfirmed: false,
+      }
+      const withPlayer = { ...bracket, players: [...bracket.players, player] }
+      return applyFreeSlotFill(withPlayer, slotIndex, player.id) ?? bracket
+    })
+  }
+
+  function clearFreeSlot(slotIndex) {
+    updateCurrent((bracket) => {
+      if (bracket.format !== 'free' || bracket.status !== 'ready') return bracket
+      const index = Number(slotIndex)
+      if (!Number.isInteger(index) || index < 0 || index >= bracket.slots.length) return bracket
+      if (bracket.slots[index] === null) return bracket
+      const slots = [...bracket.slots]
+      slots[index] = null
+      const results = { ...bracket.results }
+      delete results[`r0-m${Math.floor(index / 2)}`]
+      const next = {
+        ...bracket,
+        slots,
+        results,
+        byeSlots: (bracket.byeSlots ?? []).filter((i) => i !== index),
+        refillSlots: (bracket.refillSlots ?? []).filter((i) => i !== index),
+      }
+      return { ...next, results: sanitizeResults(next) }
+    })
+  }
+
+  function confirmFreeSlotBye(slotIndex) {
+    updateCurrent((bracket) => {
+      if (bracket.format !== 'free' || bracket.status !== 'ready') return bracket
+      const index = Number(slotIndex)
+      if (!Number.isInteger(index) || index < 0 || index >= bracket.slots.length) return bracket
+      if (bracket.slots[index] !== null || bracket.byeSlots.includes(index)) return bracket
+      const next = { ...bracket, byeSlots: [...bracket.byeSlots, index] }
+      return { ...next, results: sanitizeResults(next) }
+    })
+  }
+
+  function revokeFreeSlotBye(slotIndex) {
+    updateCurrent((bracket) => {
+      if (bracket.format !== 'free' || bracket.status !== 'ready') return bracket
+      const index = Number(slotIndex)
+      if (!bracket.byeSlots.includes(index)) return bracket
+      const next = { ...bracket, byeSlots: bracket.byeSlots.filter((i) => i !== index) }
+      return { ...next, results: sanitizeResults(next) }
+    })
+  }
+
+  function randomFillFreeSlots() {
+    updateCurrent((bracket) => {
+      if (bracket.format !== 'free' || bracket.status !== 'ready') return bracket
+      const counts = new Map()
+      bracket.slots.forEach((id) => {
+        if (id) counts.set(id, (counts.get(id) ?? 0) + 1)
+      })
+      const pool = shufflePlayers(
+        getFirstRoundState(bracket).loserIds.filter((id) => (counts.get(id) ?? 0) < 2),
+      )
+      if (!pool.length) return bracket
+
+      const byeSet = new Set(bracket.byeSlots ?? [])
+      const slots = [...bracket.slots]
+      const refills = new Set(bracket.refillSlots ?? [])
+      let poolIndex = 0
+      slots.forEach((slot, index) => {
+        if (slot !== null || byeSet.has(index) || poolIndex >= pool.length) return
+        slots[index] = pool[poolIndex]
+        refills.add(index)
+        poolIndex += 1
+      })
+      if (!poolIndex) return bracket
+      const next = { ...bracket, slots, refillSlots: [...refills] }
+      return { ...next, results: sanitizeResults(next) }
+    })
+  }
+
+  function confirmAllRemainingByes() {
+    updateCurrent((bracket) => {
+      if (bracket.format !== 'free' || bracket.status !== 'ready') return bracket
+      const byeSet = new Set(bracket.byeSlots ?? [])
+      bracket.slots.forEach((slot, index) => {
+        if (slot === null) byeSet.add(index)
+      })
+      if (byeSet.size === (bracket.byeSlots ?? []).length) return bracket
+      const next = { ...bracket, byeSlots: [...byeSet] }
+      return { ...next, results: sanitizeResults(next) }
+    })
   }
 
   function setResult(matchId, winnerSlot, scores = {}) {
     updateCurrent((bracket) => {
       const current = bracket.results?.[matchId]
       const isThirdPlaceMatch = matchId === THIRD_PLACE_MATCH_ID
-      const isRepechageMatch = matchId.startsWith(REPECHAGE_MATCH_PREFIX)
       const changedRoundMatch = /^r(\d+)-m\d+$/.exec(matchId)
       const changedRound = changedRoundMatch ? Number(changedRoundMatch[1]) : null
       const finalRoundIndex = deriveRounds(bracket).length - 1
-      const repechageTarget = isRepechageMatch
-        ? bracket.repechage?.targets?.find(
-            (target) =>
-              target.id === bracket.repechage?.matches?.find((match) => match.id === matchId)?.targetId,
-          )
-        : null
       const nextResults = Object.fromEntries(
         Object.entries(bracket.results ?? {}).filter(([id]) => {
           if (isThirdPlaceMatch) return true
-          if (isRepechageMatch) {
-            if (id === THIRD_PLACE_MATCH_ID) return false
-            if (id.startsWith(REPECHAGE_MATCH_PREFIX)) return true
-            const round = Number(/^r(\d+)-m\d+$/.exec(id)?.[1] ?? 0)
-            return round < (repechageTarget?.targetRoundIndex ?? 0)
-          }
-          if (changedRound === 0 && id.startsWith(REPECHAGE_MATCH_PREFIX)) return false
           if (id === THIRD_PLACE_MATCH_ID) return changedRound >= finalRoundIndex
           const round = Number(/^r(\d+)-m\d+$/.exec(id)?.[1] ?? 0)
           return round <= changedRound
@@ -554,175 +864,11 @@ export function useBrackets() {
           scoreB: scores.scoreB ?? current?.scoreB ?? null,
         }
       }
-      const nextBracket = {
-        ...bracket,
-        results: nextResults,
-        repechage:
-          !isThirdPlaceMatch && !isRepechageMatch && changedRound === 0
-            ? {
-                ...bracket.repechage,
-                selectedPlayerIds: [],
-                matches: [],
-              }
-            : bracket.repechage,
+      let nextBracket = { ...bracket, results: nextResults }
+      if (bracket.format === 'free' && changedRound === 0) {
+        nextBracket = releaseInvalidRefills(nextBracket)
       }
       return { ...nextBracket, results: sanitizeResults(nextBracket) }
-    })
-  }
-
-  function getFirstRoundOpponentMap(bracket) {
-    const firstRound = deriveRounds(bracket)[0] ?? []
-    const opponentMap = new Map()
-    firstRound.forEach((match) => {
-      if (!match.playerA || !match.playerB) return
-      opponentMap.set(match.playerA, match.playerB)
-      opponentMap.set(match.playerB, match.playerA)
-    })
-    return opponentMap
-  }
-
-  function assignRepechageEntries(bracket, candidateIds) {
-    const targets = bracket.repechage?.targets ?? []
-    const baseBracket = {
-      ...bracket,
-      repechage: {
-        ...bracket.repechage,
-        matches: [],
-      },
-    }
-    const rounds = deriveRounds(baseBracket)
-    const firstRoundOpponentMap = getFirstRoundOpponentMap(baseBracket)
-    const targetOpponentMap = new Map()
-
-    targets.forEach((target) => {
-      const match = rounds[target.targetRoundIndex]?.[target.targetMatchIndex]
-      const opponentId = target.targetSide === 0 ? match?.playerB : match?.playerA
-      if (opponentId) targetOpponentMap.set(target.id, opponentId)
-    })
-
-    const assignedByTarget = new Map()
-    const assignedByMatch = new Map()
-
-    function canAssign(playerId, target) {
-      const previousOpponent = firstRoundOpponentMap.get(playerId)
-      const targetOpponent = targetOpponentMap.get(target.id)
-      if (previousOpponent && targetOpponent && previousOpponent === targetOpponent) return false
-
-      const matchId = `r${target.targetRoundIndex}-m${target.targetMatchIndex}`
-      const sameMatchPlayer = assignedByMatch.get(matchId)
-      if (sameMatchPlayer && firstRoundOpponentMap.get(playerId) === sameMatchPlayer) return false
-
-      return true
-    }
-
-    function place(targetIndex, remainingIds) {
-      if (targetIndex >= targets.length) return true
-      const target = targets[targetIndex]
-      const shuffledIds = shufflePlayers(remainingIds)
-      for (const playerId of shuffledIds) {
-        if (!canAssign(playerId, target)) continue
-        const matchId = `r${target.targetRoundIndex}-m${target.targetMatchIndex}`
-        assignedByTarget.set(target.id, playerId)
-        assignedByMatch.set(matchId, playerId)
-        if (place(targetIndex + 1, remainingIds.filter((id) => id !== playerId))) return true
-        assignedByTarget.delete(target.id)
-        assignedByMatch.delete(matchId)
-      }
-      return false
-    }
-
-    const ok = place(0, [...new Set(candidateIds)])
-    if (!ok) return null
-    return targets.map((target, index) => ({
-      id: `${REPECHAGE_MATCH_PREFIX}${index}`,
-      entryPlayerId: assignedByTarget.get(target.id),
-      targetId: target.id,
-    }))
-  }
-
-  function configureRepechage(selectedPlayerIds = null) {
-    const bracket = currentBracket.value
-    if (!bracket?.repechage?.enabled) return { ok: false, errors: ['敗部復活模式尚未啟用'] }
-    const firstRound = getFirstRoundState(bracket)
-    if (!firstRound.complete) return { ok: false, errors: ['第一輪尚未全部完成'] }
-
-    const requiredCount = bracket.repechage.targets?.length ?? 0
-    if (!requiredCount) return { ok: false, errors: ['目前賽程不需要敗部復活'] }
-    if (firstRound.loserIds.length < requiredCount) {
-      return { ok: false, errors: ['第一輪敗者人數不足，無法建立敗部復活賽'] }
-    }
-
-    const candidateIds =
-      bracket.repechage.selectionMode === 'manual'
-        ? [...new Set(selectedPlayerIds ?? [])]
-        : shufflePlayers(firstRound.loserIds)
-    const selectedCount = bracket.repechage.selectionMode === 'manual' ? candidateIds.length : requiredCount
-    if (selectedCount !== requiredCount || candidateIds.some((id) => !firstRound.loserIds.includes(id))) {
-      return { ok: false, errors: [`請選擇 ${requiredCount} 位第一輪敗者`] }
-    }
-
-    const matches = assignRepechageEntries(bracket, candidateIds)
-    if (!matches) {
-      return { ok: false, errors: ['目前復活名單無法避開第一輪重複對戰，請重新抽選或調整名單'] }
-    }
-    updateCurrent((current) => ({
-      ...current,
-      repechage: {
-        ...current.repechage,
-        selectedPlayerIds: matches.map((match) => match.entryPlayerId),
-        matches,
-      },
-      results: Object.fromEntries(
-        Object.entries(current.results ?? {}).filter(([id]) => !id.startsWith(REPECHAGE_MATCH_PREFIX)),
-      ),
-    }))
-    return { ok: true, errors: [] }
-  }
-
-  function applyRepechageSettingsDuringMatch({ enabled, selectionMode, entryCount } = {}) {
-    const bracket = currentBracket.value
-    if (!bracket || bracket.status !== 'ready') return { ok: false, errors: ['對戰表尚未產生'] }
-    if (hasRepechageStarted(bracket)) return { ok: false, errors: ['敗部復活相關場次已開打，無法調整設定'] }
-
-    const available = analyzeRepechageInsertionTargets(bracket.slots, bracket.groupCount)
-    const nextEnabled = Boolean(enabled)
-    if (nextEnabled && !available.length) return { ok: false, errors: ['本賽程無需敗部復活'] }
-
-    const nextEntryCount = Math.min(
-      Math.max(1, Number(entryCount) || Number(bracket.repechage?.entryCount) || 2),
-      Math.max(1, available.length),
-    )
-    const next = {
-      ...bracket,
-      repechage: {
-        ...createRepechageState(),
-        enabled: nextEnabled,
-        selectionMode: selectionMode === 'manual' ? 'manual' : 'random',
-        entryCount: nextEntryCount,
-        targets: nextEnabled ? available.slice(0, nextEntryCount) : [],
-      },
-      results: Object.fromEntries(
-        Object.entries(bracket.results ?? {}).filter(([id]) => !id.startsWith(REPECHAGE_MATCH_PREFIX)),
-      ),
-    }
-    persist({ ...next, results: sanitizeResults(next) })
-    return { ok: true, errors: [] }
-  }
-
-  function resetRepechageSelection() {
-    updateCurrent((bracket) => {
-      if (hasRepechageStarted(bracket)) return bracket
-      return {
-        ...bracket,
-        repechage: {
-          ...bracket.repechage,
-          selectedPlayerIds: [],
-          matches: [],
-        },
-        results: Object.fromEntries(
-          Object.entries(bracket.results ?? {}).filter(([id]) => !id.startsWith(REPECHAGE_MATCH_PREFIX)),
-        ),
-      }
     })
   }
 
@@ -757,13 +903,17 @@ export function useBrackets() {
   return {
     brackets,
     bracketList,
+    openTabIds,
+    openBrackets,
     currentId,
     currentBracket,
     addBracket,
-    selectBracket,
+    openBracketTab,
+    closeBracketTab,
     deleteBracket,
     resetCurrentBracket,
     updateCurrent,
+    renameBracket,
     setPlayerCount,
     addPlayer,
     importPlayers,
@@ -773,13 +923,21 @@ export function useBrackets() {
     shufflePlayerSeeds,
     setPairingMode,
     setGroupCount,
-    setRepechageEnabled,
-    setRepechageSelectionMode,
-    setRepechageEntryCount,
+    setFormat,
+    setPrelimGroupSize,
+    setPrelimResult,
+    updatePrelimScore,
+    generateKnockoutFromPrelim,
+    reopenPrelim,
+    setFreeSlotCount,
+    fillFreeSlot,
+    addAndFillFreeSlot,
+    clearFreeSlot,
+    confirmFreeSlotBye,
+    revokeFreeSlotBye,
+    randomFillFreeSlots,
+    confirmAllRemainingByes,
     generateBracket,
-    configureRepechage,
-    applyRepechageSettingsDuringMatch,
-    resetRepechageSelection,
     setResult,
     updateScore,
     updateLottery,

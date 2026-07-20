@@ -5,6 +5,10 @@ defineProps({
     required: true,
   },
   currentId: String,
+  openIds: {
+    type: Array,
+    default: () => [],
+  },
 })
 
 defineEmits(['close', 'select', 'delete'])
@@ -21,8 +25,8 @@ function formatDate(timestamp) {
   <div class="modal-backdrop" @click.self="$emit('close')">
     <section class="modal-panel compact">
       <header class="modal-header">
-        <h2>選取對戰表</h2>
-        <button type="button" class="icon-button" @click="$emit('close')">×</button>
+        <h2>所有對戰表</h2>
+        <button type="button" class="icon-button" aria-label="關閉" @click="$emit('close')">×</button>
       </header>
 
       <div class="bracket-list">
@@ -32,6 +36,7 @@ function formatDate(timestamp) {
             <span>{{ bracket.status === 'ready' ? '已產生' : '設定中' }} · {{ formatDate(bracket.updatedAt) }}</span>
           </button>
           <span v-if="bracket.id === currentId" class="current-pill">目前</span>
+          <span v-else-if="openIds.includes(bracket.id)" class="current-pill open">已開啟</span>
           <button type="button" class="danger ghost" @click="$emit('delete', bracket.id)">刪除</button>
         </article>
       </div>
