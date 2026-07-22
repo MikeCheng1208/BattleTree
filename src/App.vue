@@ -417,7 +417,7 @@ onMounted(async () => {
 })
 
 watch(
-  () => [currentBracket.value?.id, currentBracket.value?.status],
+  [() => currentBracket.value?.id, () => currentBracket.value?.status],
   ([id, status], [previousId] = []) => {
     generationErrors.value = []
     showLottery.value = false
