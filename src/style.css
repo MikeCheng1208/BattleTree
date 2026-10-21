@@ -5061,11 +5061,56 @@ input {
   align-items: center;
 }
 
+.prelim-view-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.prelim-display-control,
+.prelim-group-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.prelim-display-control button {
+  min-height: 36px;
+  padding: 6px 12px;
+}
+
+.prelim-display-control button.active {
+  border-color: var(--accent);
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.prelim-group-filter select,
+.prelim-cross-tie-winner select {
+  min-height: 36px;
+  padding: 6px 28px 6px 10px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius);
+  color: var(--input-text);
+  background: var(--input-bg);
+  font: inherit;
+}
+
 .prelim-groups {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
   align-items: start;
+}
+
+.prelim-groups.cross-table-mode {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .prelim-group-card {
@@ -5087,6 +5132,103 @@ input {
 .prelim-matches {
   display: grid;
   gap: 8px;
+}
+
+.prelim-cross-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.prelim-cross-table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.prelim-cross-table th,
+.prelim-cross-table td {
+  min-width: 80px;
+  height: 42px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  text-align: center;
+}
+
+.prelim-cross-table th {
+  max-width: 180px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.prelim-cross-table td.prelim-cross-table-inactive {
+  background: var(--player-slot-empty-bg);
+}
+
+.prelim-cross-table td button {
+  width: 100%;
+  min-height: 34px;
+  border: 0;
+  font-weight: 900;
+}
+
+.prelim-cross-table td button:not(:disabled):hover {
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.prelim-cross-editor {
+  display: grid;
+  gap: 10px;
+  max-width: 440px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  background: var(--surface);
+}
+
+.prelim-cross-editor-scores,
+.prelim-cross-editor-actions {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+}
+
+.prelim-cross-editor-scores label {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.prelim-cross-editor-scores input {
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.prelim-cross-editor-scores span {
+  align-self: end;
+  padding-bottom: 10px;
+}
+
+.prelim-cross-tie-winner {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.prelim-cross-editor-actions {
+  justify-content: flex-end;
+}
+
+.prelim-cross-editor-actions button {
+  min-height: 34px;
+  padding: 6px 10px;
 }
 
 .prelim-standings {
