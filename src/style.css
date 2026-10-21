@@ -5194,6 +5194,37 @@ input {
   font-weight: 700;
 }
 
+.prelim-group-size-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.prelim-group-size-presets {
+  flex: 1 1 280px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.prelim-custom-size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.prelim-custom-size input {
+  width: 100px;
+  min-width: 0;
+}
+
+.prelim-custom-size-error {
+  margin: 0;
+  color: #c0392b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .free-slot-count-control button:disabled {
   opacity: 0.4;
   cursor: not-allowed;

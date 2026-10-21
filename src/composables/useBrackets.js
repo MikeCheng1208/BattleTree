@@ -109,11 +109,11 @@ function normalizeBracket(bracket) {
   normalized.bracketSize = normalized.slots.length || normalized.bracketSize || normalized.players.length
   normalized.groupCount = normalizeGroupCount(normalized.groupCount, normalized.players.length)
   normalized.format = normalizeFormat(bracket?.format)
-  normalized.prelimGroupSize = normalizePrelimGroupSize(bracket?.prelimGroupSize)
+  normalized.prelimGroupSize = normalizePrelimGroupSize(bracket?.prelimGroupSize, players.length)
   normalized.prelim =
     bracket?.prelim && Array.isArray(bracket.prelim.groups) && bracket.prelim.groups.length
       ? {
-          groupSize: normalizePrelimGroupSize(bracket.prelim.groupSize),
+          groupSize: normalizePrelimGroupSize(bracket.prelim.groupSize, players.length),
           groups: bracket.prelim.groups.map((group, index) => ({
             label: group?.label || getGroupLabel(index),
             playerIds: Array.isArray(group?.playerIds) ? group.playerIds : [],
@@ -545,9 +545,13 @@ export function useBrackets() {
   }
 
   function setPrelimGroupSize(groupSize) {
+    const bracket = currentBracket.value
+    if (!bracket) return
+    const size = Number(groupSize)
+    if (normalizePrelimGroupSize(size, bracket.players.length) !== size) return
     updateCurrent((bracket) => ({
       ...bracket,
-      prelimGroupSize: normalizePrelimGroupSize(groupSize),
+      prelimGroupSize: size,
       status: 'setup',
       slots: [],
       results: {},
@@ -599,7 +603,7 @@ export function useBrackets() {
         status: 'prelim',
         slots: [],
         results: {},
-        prelim: { groupSize: normalizePrelimGroupSize(bracket.prelimGroupSize), groups, results: {} },
+        prelim: { groupSize: normalizePrelimGroupSize(bracket.prelimGroupSize, bracket.players.length), groups, results: {} },
         byeSlots: [],
         refillSlots: [],
         lottery: createLotteryState(),

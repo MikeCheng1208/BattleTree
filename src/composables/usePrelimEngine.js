@@ -4,13 +4,20 @@ import { getRoundRobinStandings } from './useRoundRobinStandings.js'
 export const PRELIM_MATCH_PREFIX = 'p'
 export const PRELIM_GROUP_SIZE_OPTIONS = [3, 4, 5]
 
-export function normalizePrelimGroupSize(groupSize) {
+export function isValidCustomPrelimGroupSize(groupSize, playerCount) {
   const size = Number(groupSize)
-  return PRELIM_GROUP_SIZE_OPTIONS.includes(size) ? size : 3
+  return Number.isInteger(size) && size >= 3 && size <= Math.floor(playerCount / 2)
+}
+
+export function normalizePrelimGroupSize(groupSize, playerCount = Infinity) {
+  const size = Number(groupSize)
+  return PRELIM_GROUP_SIZE_OPTIONS.includes(size) || isValidCustomPrelimGroupSize(size, playerCount)
+    ? size
+    : 3
 }
 
 export function getPrelimGroupCount(playerCount, groupSize) {
-  return Math.max(1, Math.round(playerCount / normalizePrelimGroupSize(groupSize)))
+  return Math.max(1, Math.round(playerCount / normalizePrelimGroupSize(groupSize, playerCount)))
 }
 
 export function getPrelimKnockoutSize(groupCount) {

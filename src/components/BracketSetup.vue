@@ -12,7 +12,11 @@ import {
   normalizeFreeSlotCount,
   validatePlayers,
 } from '../composables/useBracketEngine'
-import { getPrelimPlan, PRELIM_GROUP_SIZE_OPTIONS } from '../composables/usePrelimEngine'
+import {
+  getPrelimPlan,
+  isValidCustomPrelimGroupSize,
+  PRELIM_GROUP_SIZE_OPTIONS,
+} from '../composables/usePrelimEngine'
 
 const props = defineProps({
   bracket: {
@@ -40,6 +44,9 @@ const emit = defineEmits([
 const GROUP_OPTIONS = [1, 2, 4, 8]
 
 const playerCount = ref(props.bracket.players.length)
+const customPrelimGroupSize = ref(String(props.bracket.prelimGroupSize))
+const customPrelimGroupSizeError = ref('')
+const maxCustomPrelimGroupSize = computed(() => Math.floor(props.bracket.players.length / 2))
 const submitErrors = ref([])
 const importErrors = ref([])
 const importSummary = ref('')
@@ -121,10 +128,37 @@ watch(
   },
 )
 
+watch(
+  () => props.bracket.prelimGroupSize,
+  (size) => {
+    customPrelimGroupSize.value = String(size)
+    customPrelimGroupSizeError.value = ''
+  },
+)
+
 const validationErrors = computed(() => validatePlayers(props.bracket.players))
 
 function applyPlayerCount() {
   emit('set-player-count', playerCount.value)
+}
+
+function selectPrelimGroupSize(size) {
+  customPrelimGroupSize.value = String(size)
+  customPrelimGroupSizeError.value = ''
+  emit('set-prelim-group-size', size)
+}
+
+function applyCustomPrelimGroupSize(event) {
+  const value = event.target.value
+  customPrelimGroupSize.value = value
+  if (!value || !isValidCustomPrelimGroupSize(value, props.bracket.players.length)) {
+    customPrelimGroupSizeError.value = maxCustomPrelimGroupSize.value < 3
+      ? '自訂每組人數至少需要 6 位參賽者'
+      : `請輸入 3 至 ${maxCustomPrelimGroupSize.value} 的整數`
+    return
+  }
+  customPrelimGroupSizeError.value = ''
+  emit('set-prelim-group-size', Number(value))
 }
 
 function generate() {
@@ -244,17 +278,35 @@ function closeCsvColumnPicker() {
     <div class="field setup-control-card format-settings-card">
       <template v-if="bracket.format === 'prelim'">
         <span>預賽每組人數</span>
-        <div class="segmented group-count-control" role="radiogroup" aria-label="預賽每組人數">
-          <button
-            v-for="size in PRELIM_GROUP_SIZE_OPTIONS"
-            :key="size"
-            type="button"
-            :class="{ active: bracket.prelimGroupSize === size }"
-            @click="emit('set-prelim-group-size', size)"
-          >
-            約 {{ size }} 人
-          </button>
+        <div class="prelim-group-size-controls">
+          <div class="segmented group-count-control prelim-group-size-presets" role="radiogroup" aria-label="預賽每組人數預設值">
+            <button
+              v-for="size in PRELIM_GROUP_SIZE_OPTIONS"
+              :key="size"
+              type="button"
+              :class="{ active: bracket.prelimGroupSize === size }"
+              @click="selectPrelimGroupSize(size)"
+            >
+              約 {{ size }} 人
+            </button>
+          </div>
+          <label class="prelim-custom-size">
+            <span>自訂</span>
+            <input
+              :value="customPrelimGroupSize"
+              type="number"
+              min="3"
+              :max="maxCustomPrelimGroupSize"
+              step="1"
+              :aria-invalid="Boolean(customPrelimGroupSizeError)"
+              :aria-describedby="customPrelimGroupSizeError ? 'prelim-custom-size-error' : undefined"
+              @input="applyCustomPrelimGroupSize"
+            />
+          </label>
         </div>
+        <p v-if="customPrelimGroupSizeError" id="prelim-custom-size-error" class="prelim-custom-size-error" role="alert">
+          {{ customPrelimGroupSizeError }}
+        </p>
         <p class="format-settings-hint">
           各組打完循環賽後，第 1 名（不足時補成績最佳的第 2 名）晉級淘汰賽。
         </p>
