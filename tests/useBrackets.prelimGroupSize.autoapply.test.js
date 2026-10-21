@@ -82,15 +82,31 @@ function setupPendingCustomSix() {
   return { api, stop }
 }
 
-// 複製 src/components/BracketSetup.vue 監看 props.bracket.players.length 的 watch 邏輯（commit 414bcb8b 時的版本）。
-// 元件無法在 node --test 掛載，因此在這裡照抄：customPrelimGroupSizeError 為空就直接 return（notice 為 ''），
-// 否則重新判斷輸入框的值，並以 wasBlocked: true 呼叫 getAutoAppliedPrelimGroupSizeNotice。
+// 複製 src/components/BracketSetup.vue 監看 props.bracket.players.length 的 watch 邏輯（補上待生效自訂值提示後的版本）。
+// 元件無法在 node --test 掛載，因此在這裡照抄：
+// - customPrelimGroupSizeError 為空：若已存的自訂值（storedCustomSize）在舊人數下待生效、新人數下合法，
+//   代表 normalizeBracket 已自動套用，只產生「已套用」提示、不 emit；否則 notice 為 ''。
+// - customPrelimGroupSizeError 非空：重新判斷輸入框的值，並以 wasBlocked: true 呼叫 getAutoAppliedPrelimGroupSizeNotice。
 // 元件的 watch 若修改，這個 helper 也必須同步更新。
-function simulateCurrentWatch({ customInputError, inputValue, previousCount, count }) {
+function simulateCurrentWatch({ customInputError, inputValue, storedCustomSize, previousCount, count }) {
   // 對應元件：prelimGroupSizeNotice.value = ''
   let notice = ''
-  // 對應元件：if (!customPrelimGroupSizeError.value) return
-  if (!customInputError) return { notice, customInputError, emittedSize: null }
+  // 對應元件：if (!customPrelimGroupSizeError.value) { ...; return }
+  if (!customInputError) {
+    if (
+      storedCustomSize != null &&
+      getPendingPrelimGroupSizeError(storedCustomSize, previousCount) &&
+      !getPendingPrelimGroupSizeError(storedCustomSize, count)
+    ) {
+      notice = getAutoAppliedPrelimGroupSizeNotice({
+        value: String(storedCustomSize),
+        wasBlocked: true,
+        previousPlayerCount: previousCount,
+        playerCount: count,
+      })
+    }
+    return { notice, customInputError, emittedSize: null }
+  }
   const { size, error } = resolveCustomPrelimGroupSizeInput(inputValue, count)
   notice = getAutoAppliedPrelimGroupSizeNotice({
     value: inputValue,
@@ -135,39 +151,52 @@ test('自動套用複驗：24 人自訂 6，降到 10 人待生效並擋下產�
   assert.deepEqual(api.currentBracket.value.prelim.groups.map((group) => group.playerIds.length), [6, 6])
 })
 
-// ---- 元件 watch：目前行為與已知缺口 ----
+// ---- 元件 watch：已存的待生效自訂值自動生效時顯示提示 ----
 
-test('自動套用複驗：[記錄目前行為／已知缺口] 待生效的自訂 6 在 10→12 人自動生效時，watch 不顯示提示', () => {
+test('自動套用複驗：待生效的自訂 6 在 10→12 人自動生效時，watch 顯示已套用提示且不 emit', () => {
   const { api } = setupPendingCustomSix()
   const inputValue = inputValueOf(api.currentBracket.value)
   assert.equal(inputValue, '6')
   // 待生效提示來自 pendingPrelimGroupSizeError（computed），輸入框本身沒有 customPrelimGroupSizeError
   const customInputError = ''
 
+  // 10→11 人：6 仍不合法，不顯示提示
+  const stillPending = simulateCurrentWatch({
+    customInputError,
+    inputValue,
+    storedCustomSize: 6,
+    previousCount: 10,
+    count: 11,
+  })
+  assert.equal(stillPending.notice, '')
+  assert.equal(stillPending.emittedSize, null)
+
   api.setPlayerCount(12)
   assert.equal(api.currentBracket.value.prelimGroupSize, 6)
 
-  const result = simulateCurrentWatch({ customInputError, inputValue, previousCount: 10, count: 12 })
-  // 已知缺口：自訂 6 在 10 人時被擋下（畫面有提示、無法產生），人數加回 12 後由 normalizeBracket 自動生效，
-  // 但 watch 只看 customPrelimGroupSizeError，此時為空就直接 return，沒有「已套用」提示。
-  // 這違反「被擋下的值自動生效要顯示提示」。修正 src 後此測試應改寫為期望有提示。
-  assert.equal(result.notice, '')
+  // 自訂 6 在 10 人時被擋下（畫面有提示、無法產生），人數加回 12 後由 normalizeBracket 自動生效；
+  // watch 依已存的 prelimCustomGroupSize 判斷先前待生效、現在合法，顯示「已套用」提示。
+  // 值已由 normalizeBracket 套用，watch 不需再 emit。
+  const result = simulateCurrentWatch({ customInputError, inputValue, storedCustomSize: 6, previousCount: 10, count: 12 })
+  assert.equal(result.notice, '人數已達 12 人，自訂每組 6 人已套用')
   assert.equal(result.emittedSize, null)
 })
 
-test(
-  '自動套用複驗：[期望行為] 待生效的自訂 6 在 10→12 人自動生效時，watch 應顯示「已套用」提示',
-  { todo: 'src 尚未修：watch 的 wasBlocked 需同時涵蓋 getPendingPrelimGroupSizeError(prelimCustomGroupSize, previousCount) 非空的情況' },
-  () => {
-    const { api } = setupPendingCustomSix()
-    const inputValue = inputValueOf(api.currentBracket.value)
-    api.setPlayerCount(12)
+test('自動套用複驗：[期望行為] 待生效的自訂 6 在 10→12 人自動生效時，watch 應顯示「已套用」提示', () => {
+  const { api } = setupPendingCustomSix()
+  const inputValue = inputValueOf(api.currentBracket.value)
+  api.setPlayerCount(12)
 
-    // simulateCurrentWatch 是目前元件邏輯的複製；src 修正後需同步更新 helper，此 todo 才會通過並可移除 todo 標記
-    const result = simulateCurrentWatch({ customInputError: '', inputValue, previousCount: 10, count: 12 })
-    assert.equal(result.notice, '人數已達 12 人，自訂每組 6 人已套用')
-  },
-)
+  // simulateCurrentWatch 是目前元件邏輯的複製；元件的 watch 若修改，helper 需同步更新
+  const result = simulateCurrentWatch({
+    customInputError: '',
+    inputValue,
+    storedCustomSize: api.currentBracket.value.prelimCustomGroupSize,
+    previousCount: 10,
+    count: 12,
+  })
+  assert.equal(result.notice, '人數已達 12 人，自訂每組 6 人已套用')
+})
 
 test('自動套用複驗：以 getPendingPrelimGroupSizeError(prelimCustomGroupSize, previousCount) 判定被擋下時，純函式回傳已套用提示', () => {
   const { api } = setupPendingCustomSix()
