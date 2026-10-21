@@ -13,9 +13,10 @@ import {
   validatePlayers,
 } from '../composables/useBracketEngine'
 import {
+  getPendingPrelimGroupSizeError,
   getPrelimPlan,
-  isValidCustomPrelimGroupSize,
   PRELIM_GROUP_SIZE_OPTIONS,
+  resolveCustomPrelimGroupSizeInput,
 } from '../composables/usePrelimEngine'
 
 const props = defineProps({
@@ -44,8 +45,18 @@ const emit = defineEmits([
 const GROUP_OPTIONS = [1, 2, 4, 8]
 
 const playerCount = ref(props.bracket.players.length)
-const customPrelimGroupSize = ref(String(props.bracket.prelimGroupSize))
+// 自訂值人數不足時仍保留在 prelimCustomGroupSize，輸入框與預設按鈕都以它為準
+const selectedPrelimGroupSize = computed(
+  () => props.bracket.prelimCustomGroupSize ?? props.bracket.prelimGroupSize,
+)
+const pendingPrelimGroupSizeError = computed(() =>
+  getPendingPrelimGroupSizeError(props.bracket.prelimCustomGroupSize, props.bracket.players.length),
+)
+const customPrelimGroupSize = ref(String(selectedPrelimGroupSize.value))
 const customPrelimGroupSizeError = ref('')
+const prelimGroupSizeMessage = computed(
+  () => customPrelimGroupSizeError.value || pendingPrelimGroupSizeError.value,
+)
 const maxCustomPrelimGroupSize = computed(() => Math.floor(props.bracket.players.length / 2))
 const submitErrors = ref([])
 const importErrors = ref([])
@@ -82,13 +93,16 @@ const effectiveFreeSlotCount = computed(() =>
   normalizeFreeSlotCount(props.bracket.freeSlotCount, props.bracket.players.length),
 )
 const previewIsError = computed(
-  () => props.bracket.format === 'free' && props.bracket.players.length > 64,
+  () =>
+    (props.bracket.format === 'free' && props.bracket.players.length > 64) ||
+    (props.bracket.format === 'prelim' && Boolean(pendingPrelimGroupSizeError.value)),
 )
 const firstRoundPreviewText = computed(() => {
   const total = props.bracket.players.length
   if (total < 2) return ''
   if (props.bracket.format === 'prelim') {
     if (total < 3) return '預賽模式至少需要 3 位參賽者'
+    if (pendingPrelimGroupSizeError.value) return pendingPrelimGroupSizeError.value
     const plan = getPrelimPlan(total, props.bracket.prelimGroupSize)
     const sizeCounts = new Map()
     plan.groupSizes.forEach((size) => sizeCounts.set(size, (sizeCounts.get(size) ?? 0) + 1))
@@ -125,16 +139,18 @@ watch(
   () => props.bracket.players.length,
   (count) => {
     playerCount.value = count
+    // 先前被擋下、仍顯示在輸入框的自訂值：人數變動後重新判斷，合法就套用，避免顯示值與實際值不一致
+    if (!customPrelimGroupSizeError.value) return
+    const { size, error } = resolveCustomPrelimGroupSizeInput(customPrelimGroupSize.value, count)
+    customPrelimGroupSizeError.value = error
+    if (size !== null) emit('set-prelim-group-size', size)
   },
 )
 
-watch(
-  () => props.bracket.prelimGroupSize,
-  (size) => {
-    customPrelimGroupSize.value = String(size)
-    customPrelimGroupSizeError.value = ''
-  },
-)
+watch(selectedPrelimGroupSize, (size) => {
+  customPrelimGroupSize.value = String(size)
+  customPrelimGroupSizeError.value = ''
+})
 
 const validationErrors = computed(() => validatePlayers(props.bracket.players))
 
@@ -151,14 +167,9 @@ function selectPrelimGroupSize(size) {
 function applyCustomPrelimGroupSize(event) {
   const value = event.target.value
   customPrelimGroupSize.value = value
-  if (!value || !isValidCustomPrelimGroupSize(value, props.bracket.players.length)) {
-    customPrelimGroupSizeError.value = maxCustomPrelimGroupSize.value < 3
-      ? '自訂每組人數至少需要 6 位參賽者'
-      : `請輸入 3 至 ${maxCustomPrelimGroupSize.value} 的整數`
-    return
-  }
-  customPrelimGroupSizeError.value = ''
-  emit('set-prelim-group-size', Number(value))
+  const { size, error } = resolveCustomPrelimGroupSizeInput(value, props.bracket.players.length)
+  customPrelimGroupSizeError.value = error
+  if (size !== null) emit('set-prelim-group-size', size)
 }
 
 function generate() {
@@ -284,7 +295,7 @@ function closeCsvColumnPicker() {
               v-for="size in PRELIM_GROUP_SIZE_OPTIONS"
               :key="size"
               type="button"
-              :class="{ active: bracket.prelimGroupSize === size }"
+              :class="{ active: selectedPrelimGroupSize === size }"
               @click="selectPrelimGroupSize(size)"
             >
               約 {{ size }} 人
@@ -298,14 +309,14 @@ function closeCsvColumnPicker() {
               min="3"
               :max="maxCustomPrelimGroupSize"
               step="1"
-              :aria-invalid="Boolean(customPrelimGroupSizeError)"
-              :aria-describedby="customPrelimGroupSizeError ? 'prelim-custom-size-error' : undefined"
+              :aria-invalid="Boolean(prelimGroupSizeMessage)"
+              :aria-describedby="prelimGroupSizeMessage ? 'prelim-custom-size-error' : undefined"
               @input="applyCustomPrelimGroupSize"
             />
           </label>
         </div>
-        <p v-if="customPrelimGroupSizeError" id="prelim-custom-size-error" class="prelim-custom-size-error" role="alert">
-          {{ customPrelimGroupSizeError }}
+        <p v-if="prelimGroupSizeMessage" id="prelim-custom-size-error" class="prelim-custom-size-error" role="alert">
+          {{ prelimGroupSizeMessage }}
         </p>
         <p class="format-settings-hint">
           各組打完循環賽後，第 1 名（不足時補成績最佳的第 2 名）晉級淘汰賽。

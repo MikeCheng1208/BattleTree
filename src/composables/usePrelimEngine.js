@@ -16,6 +16,31 @@ export function normalizePrelimGroupSize(groupSize, playerCount = Infinity) {
     : 3
 }
 
+// 使用者自訂（非 3／4／5 預設）的每組人數；不依目前人數驗證，人數變動時保留原值
+export function normalizePrelimCustomGroupSize(groupSize) {
+  const size = Number(groupSize)
+  return Number.isInteger(size) && size >= 3 && !PRELIM_GROUP_SIZE_OPTIONS.includes(size) ? size : null
+}
+
+// 已存的自訂每組人數在目前人數下不合法時的提示；合法或未自訂時回傳空字串
+export function getPendingPrelimGroupSizeError(customGroupSize, playerCount) {
+  if (customGroupSize === null || customGroupSize === undefined) return ''
+  if (isValidCustomPrelimGroupSize(customGroupSize, playerCount)) return ''
+  return `自訂每組 ${customGroupSize} 人至少需要 ${customGroupSize * 2} 位參賽者（目前 ${playerCount} 人），請增加參賽人數或重新設定每組人數`
+}
+
+// 設定頁自訂輸入框的值：合法時回傳要套用的人數，否則回傳提示
+export function resolveCustomPrelimGroupSizeInput(value, playerCount) {
+  if (value !== '' && isValidCustomPrelimGroupSize(value, playerCount)) {
+    return { size: Number(value), error: '' }
+  }
+  const max = Math.floor(playerCount / 2)
+  return {
+    size: null,
+    error: max < 3 ? '自訂每組人數至少需要 6 位參賽者' : `請輸入 3 至 ${max} 的整數`,
+  }
+}
+
 export function getPrelimGroupCount(playerCount, groupSize) {
   return Math.max(1, Math.round(playerCount / normalizePrelimGroupSize(groupSize, playerCount)))
 }
