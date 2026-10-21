@@ -1,6 +1,10 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { getPrelimCrossTableCell, getPrelimMatchResultFromCell } from '../composables/usePrelimCrossTable.js'
+import {
+  getPrelimCrossTableCell,
+  getPrelimCrossTableSelectionCell,
+  getPrelimMatchResultFromCell,
+} from '../composables/usePrelimCrossTable.js'
 
 const props = defineProps({
   playerIds: { type: Array, required: true },
@@ -21,21 +25,48 @@ const selected = ref(null)
 const rowScore = ref('')
 const columnScore = ref('')
 const tieWinner = ref('')
+const editorError = ref('')
 const isTie = computed(() => rowScore.value !== '' && columnScore.value !== '' && Number(rowScore.value) === Number(columnScore.value))
+// 重新分組抽籤後組名不變、元件不會重建，選手或比賽一變就要關掉編輯框
+const groupKey = computed(() =>
+  `${props.playerIds.join('|')}#${props.matches.map((match) => match.id).sort().join('|')}`,
+)
 
 watch(() => props.locked, (locked) => {
-  if (locked) selected.value = null
+  if (locked) closeEditor()
+})
+
+watch(groupKey, () => {
+  closeEditor()
 })
 
 function playerName(id) {
   return props.playerMap[id]?.displayName ?? props.playerMap[id]?.name ?? id
 }
 
+function hasScore(cell) {
+  return cell.scoreRow != null && cell.scoreColumn != null
+}
+
+function outcomeText(cell) {
+  if (cell.rowOutcome === 'win') return '勝'
+  if (cell.rowOutcome === 'loss') return '敗'
+  return ''
+}
+
 function cellLabel(cell, rowPlayerId, columnPlayerId) {
-  const score = cell.scoreRow == null || cell.scoreColumn == null
-    ? '尚未輸入比分'
-    : `${cell.scoreRow}:${cell.scoreColumn}`
-  return `${playerName(rowPlayerId)} 對 ${playerName(columnPlayerId)}，${score}${props.locked ? '' : '，點擊編輯比分'}`
+  let result = '尚未輸入比分'
+  if (hasScore(cell)) {
+    result = `${cell.scoreRow}:${cell.scoreColumn}`
+  } else if (cell.rowOutcome) {
+    result = `${playerName(rowPlayerId)} ${outcomeText(cell)}，尚未輸入比分`
+  }
+  return `${playerName(rowPlayerId)} 對 ${playerName(columnPlayerId)}，${result}${props.locked ? '' : '，點擊編輯比分'}`
+}
+
+function closeEditor() {
+  selected.value = null
+  editorError.value = ''
 }
 
 function openCell(cell, rowPlayerId, columnPlayerId) {
@@ -44,6 +75,7 @@ function openCell(cell, rowPlayerId, columnPlayerId) {
   rowScore.value = cell.scoreRow ?? ''
   columnScore.value = cell.scoreColumn ?? ''
   tieWinner.value = cell.match.winnerId === rowPlayerId ? 'row' : cell.match.winnerId === columnPlayerId ? 'column' : ''
+  editorError.value = ''
 }
 
 function validScore(value) {
@@ -52,12 +84,24 @@ function validScore(value) {
 }
 
 function saveScore() {
-  const cell = selected.value
-  if (props.locked || !cell || !validScore(rowScore.value) || !validScore(columnScore.value)) return
+  if (props.locked || !selected.value) return
+  // 以目前的比賽資料重算格子，避免用到舊的選手順序或舊結果
+  const cell = getPrelimCrossTableSelectionCell(selected.value, props.matches)
+  if (!cell) {
+    closeEditor()
+    return
+  }
+  if (!validScore(rowScore.value) || !validScore(columnScore.value)) {
+    editorError.value = '比分請輸入 0 以上的整數'
+    return
+  }
 
   const first = Number(rowScore.value)
   const second = Number(columnScore.value)
-  if (first === second && !tieWinner.value) return
+  if (first === second && !tieWinner.value) {
+    editorError.value = '比分平手，請選擇勝者'
+    return
+  }
   const { winnerSlot, scoreA, scoreB } = getPrelimMatchResultFromCell(
     cell,
     first,
@@ -70,7 +114,7 @@ function saveScore() {
   } else {
     emit('set-result', cell.match.id, winnerSlot, { scoreA, scoreB })
   }
-  selected.value = null
+  closeEditor()
 }
 </script>
 
@@ -98,9 +142,10 @@ function saveScore() {
               :aria-label="cellLabel(cells[rowIndex][columnIndex], rowPlayerId, columnPlayerId)"
               @click="openCell(cells[rowIndex][columnIndex], rowPlayerId, columnPlayerId)"
             >
-              <template v-if="cells[rowIndex][columnIndex].scoreRow != null && cells[rowIndex][columnIndex].scoreColumn != null">
+              <template v-if="hasScore(cells[rowIndex][columnIndex])">
                 {{ cells[rowIndex][columnIndex].scoreRow }}:{{ cells[rowIndex][columnIndex].scoreColumn }}
               </template>
+              <template v-else>{{ outcomeText(cells[rowIndex][columnIndex]) }}</template>
             </button>
           </td>
         </tr>
@@ -108,7 +153,7 @@ function saveScore() {
     </table>
   </div>
 
-  <form v-if="selected && !locked" class="prelim-cross-editor" @submit.prevent="saveScore">
+  <form v-if="selected && !locked" class="prelim-cross-editor" novalidate @submit.prevent="saveScore">
     <strong>{{ playerName(selected.rowPlayerId) }} 對 {{ playerName(selected.columnPlayerId) }}</strong>
     <div class="prelim-cross-editor-scores">
       <label>{{ playerName(selected.rowPlayerId) }}<input v-model="rowScore" type="number" min="0" step="1" required /></label>
@@ -123,8 +168,9 @@ function saveScore() {
         <option value="column">{{ playerName(selected.columnPlayerId) }}</option>
       </select>
     </label>
+    <p v-if="editorError" class="prelim-cross-editor-error" role="alert">{{ editorError }}</p>
     <div class="prelim-cross-editor-actions">
-      <button type="button" @click="selected = null">取消</button>
+      <button type="button" @click="closeEditor">取消</button>
       <button type="submit" class="primary-action">儲存比分</button>
     </div>
   </form>

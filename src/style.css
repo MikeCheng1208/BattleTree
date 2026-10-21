@@ -5189,8 +5189,7 @@ input {
   background: var(--surface);
 }
 
-.prelim-cross-editor-scores,
-.prelim-cross-editor-actions {
+.prelim-cross-editor-scores {
   display: flex;
   gap: 8px;
   align-items: end;
@@ -5222,7 +5221,17 @@ input {
   font-weight: 700;
 }
 
+.prelim-cross-editor-error {
+  margin: 0;
+  color: #c0392b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .prelim-cross-editor-actions {
+  display: flex;
+  gap: 8px;
+  align-items: end;
   justify-content: flex-end;
 }
 

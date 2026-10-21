@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import MatchCard from './MatchCard.vue'
 import PrelimCrossTable from './PrelimCrossTable.vue'
 import { getPlayerMap } from '../composables/useBracketEngine'
@@ -39,11 +39,18 @@ const groupViews = computed(() =>
     matches: matches.value.filter((match) => match.groupIndex === group.groupIndex),
   })),
 )
-const visibleGroups = computed(() =>
-  selectedGroup.value === 'all'
-    ? groupViews.value
-    : groupViews.value.filter((group) => String(group.groupIndex) === selectedGroup.value),
-)
+const visibleGroups = computed(() => {
+  if (selectedGroup.value === 'all') return groupViews.value
+  const filtered = groupViews.value.filter((group) => String(group.groupIndex) === selectedGroup.value)
+  return filtered.length > 0 ? filtered : groupViews.value
+})
+
+// 重新分組後組數可能變少，選到的小組不存在就回到「全部」
+watch(groupViews, (groups) => {
+  if (selectedGroup.value !== 'all' && !groups.some((group) => String(group.groupIndex) === selectedGroup.value)) {
+    selectedGroup.value = 'all'
+  }
+})
 const qualificationRule = computed(() => {
   const { knockoutSize, runnerUpCount } = qualification.value
   const groupCount = standings.value.length
