@@ -48,9 +48,12 @@ const { createFreeSlots, createGroupedSlots, normalizeFreeSlotCount } = await im
   '../src/composables/useBracketEngine.js'
 )
 // 以 destructuring 取用：修正前不存在的匯出只會是 undefined，不會讓整個檔案載入失敗
-const { getPendingPrelimGroupSizeError, getPrelimPlan, resolveCustomPrelimGroupSizeInput } = await import(
-  '../src/composables/usePrelimEngine.js'
-)
+const {
+  getAutoAppliedPrelimGroupSizeNotice,
+  getPendingPrelimGroupSizeError,
+  getPrelimPlan,
+  resolveCustomPrelimGroupSizeInput,
+} = await import('../src/composables/usePrelimEngine.js')
 
 const STORAGE_BRACKETS = 'battletree:brackets'
 const scopes = []
@@ -222,15 +225,23 @@ test('useBrackets：切到單淘汰（single）後 generateBracket 不受 prelim
   assert.deepEqual(withDefault.slots, withCustom.slots)
 })
 
-test('useBrackets：[記錄目前行為，規格未定義] 16 人自訂 8 後人數降為 10，prelimGroupSize 變回 3', () => {
+test('useBrackets：16 人自訂 8 後人數降為 10，保留自訂值 8 並擋下產生', () => {
   const { api } = setupPrelim(16, 8)
   assert.equal(api.currentBracket.value.prelimGroupSize, 8)
 
   api.setPlayerCount(10)
-  // 目前行為：setPlayerCount 不調整 prelimGroupSize，persist 時 normalizeBracket 以新人數重新驗證，
-  // 8 > floor(10 / 2) = 5 判定不合法，退回預設 3（不是夾到上限 5）。
-  assert.equal(api.currentBracket.value.players.length, 10)
-  assert.equal(api.currentBracket.value.prelimGroupSize, 3)
+  // 8 > floor(10 / 2) = 5 判定不合法：自訂值保留在 prelimCustomGroupSize，
+  // prelimGroupSize 暫時退回預設 3（不是夾到上限 5），產生時以自訂值為準擋下。
+  const bracket = api.currentBracket.value
+  assert.equal(bracket.players.length, 10)
+  assert.equal(bracket.prelimCustomGroupSize, 8)
+  assert.equal(bracket.prelimGroupSize, 3)
+
+  const result = api.generateBracket()
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [getPendingPrelimGroupSizeError(8, 10)])
+  assert.equal(api.currentBracket.value.status, 'setup')
+  assert.equal(api.currentBracket.value.prelim, null)
 })
 
 // ---- 回歸：24 人自訂每組 6 人卻產生 8 組×3 人 ----
@@ -364,5 +375,69 @@ test('回歸：24 人選預設 3／4／5 的分組不變', () => {
     )
     stop()
     storage.clear()
+  }
+})
+
+// ---- 被擋下的自訂值因人數變動自動生效時的提示 ----
+
+test('自動套用提示：24 人輸入 13 被擋下，人數變成 26 後 13 生效並提示', () => {
+  const { api } = setupPrelim(24)
+  const blocked = resolveCustomPrelimGroupSizeInput('13', api.currentBracket.value.players.length)
+  assert.equal(blocked.size, null)
+  assert.ok(blocked.error)
+
+  api.setPlayerCount(26)
+  const count = api.currentBracket.value.players.length
+  const pending = resolveCustomPrelimGroupSizeInput('13', count)
+  assert.deepEqual(pending, { size: 13, error: '' })
+  const notice = getAutoAppliedPrelimGroupSizeNotice({
+    value: '13',
+    wasBlocked: true,
+    previousPlayerCount: 24,
+    playerCount: count,
+  })
+  assert.equal(notice, '人數已達 26 人，自訂每組 13 人已套用')
+
+  api.setPrelimGroupSize(pending.size)
+  assert.equal(api.currentBracket.value.prelimGroupSize, 13)
+  assert.deepEqual(api.generateBracket(), { ok: true, errors: [] })
+  assert.deepEqual(api.currentBracket.value.prelim.groups.map((group) => group.playerIds.length), [13, 13])
+})
+
+test('自動套用提示：原本就合法（未被擋下）時，人數變動不提示', () => {
+  assert.equal(
+    getAutoAppliedPrelimGroupSizeNotice({ value: '6', wasBlocked: false, previousPlayerCount: 24, playerCount: 26 }),
+    '',
+  )
+  assert.equal(
+    getAutoAppliedPrelimGroupSizeNotice({ value: '13', wasBlocked: false, previousPlayerCount: 24, playerCount: 26 }),
+    '',
+  )
+})
+
+test('自動套用提示：使用者自己輸入合法值（人數未變動）時不提示', () => {
+  // 26 人時先輸入 14 被擋下，再自己改成 13：合法並套用，但不是因人數變動而生效
+  assert.equal(resolveCustomPrelimGroupSizeInput('14', 26).size, null)
+  assert.deepEqual(resolveCustomPrelimGroupSizeInput('13', 26), { size: 13, error: '' })
+  assert.equal(
+    getAutoAppliedPrelimGroupSizeNotice({ value: '13', wasBlocked: true, previousPlayerCount: 26, playerCount: 26 }),
+    '',
+  )
+})
+
+test('自動套用提示：人數變動後仍然不合法時不提示', () => {
+  for (const [value, playerCount] of [
+    ['13', 25],
+    ['13', 20],
+    ['', 26],
+    ['abc', 26],
+    ['2', 26],
+    ['6.5', 26],
+  ]) {
+    assert.equal(
+      getAutoAppliedPrelimGroupSizeNotice({ value, wasBlocked: true, previousPlayerCount: 24, playerCount }),
+      '',
+      `輸入 ${JSON.stringify(value)}、${playerCount} 人`,
+    )
   }
 })
