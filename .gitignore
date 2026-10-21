@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# 本機 AI 技能資料夾與鎖定檔（曾含外洩 API key，issue #1），不納入版本控制
+.agents/
+skills-lock.json
