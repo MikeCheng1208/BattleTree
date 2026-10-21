@@ -301,7 +301,7 @@ function closeCsvColumnPicker() {
               約 {{ size }} 人
             </button>
           </div>
-          <label class="prelim-custom-size">
+          <label class="prelim-custom-size" :class="{ active: !PRELIM_GROUP_SIZE_OPTIONS.includes(bracket.prelimGroupSize) }">
             <span>自訂</span>
             <input
               :value="customPrelimGroupSize"
