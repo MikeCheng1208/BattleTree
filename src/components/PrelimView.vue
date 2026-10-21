@@ -1,6 +1,7 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import MatchCard from './MatchCard.vue'
+import PrelimCrossTable from './PrelimCrossTable.vue'
 import { getPlayerMap } from '../composables/useBracketEngine'
 import { getPrelimMatches, getPrelimQualification, getPrelimStandings } from '../composables/usePrelimEngine'
 
@@ -16,6 +17,8 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['set-result', 'update-score', 'generate-knockout', 'reshuffle', 'reopen'])
+const displayMode = ref('cards')
+const selectedGroup = ref('all')
 
 const playerMap = computed(() => getPlayerMap(props.bracket.players))
 const matches = computed(() =>
@@ -32,9 +35,22 @@ const qualifiedIds = computed(() =>
 const groupViews = computed(() =>
   standings.value.map((group) => ({
     ...group,
+    playerIds: props.bracket.prelim.groups[group.groupIndex].playerIds,
     matches: matches.value.filter((match) => match.groupIndex === group.groupIndex),
   })),
 )
+const visibleGroups = computed(() => {
+  if (selectedGroup.value === 'all') return groupViews.value
+  const filtered = groupViews.value.filter((group) => String(group.groupIndex) === selectedGroup.value)
+  return filtered.length > 0 ? filtered : groupViews.value
+})
+
+// 重新分組後組數可能變少，選到的小組不存在就回到「全部」
+watch(groupViews, (groups) => {
+  if (selectedGroup.value !== 'all' && !groups.some((group) => String(group.groupIndex) === selectedGroup.value)) {
+    selectedGroup.value = 'all'
+  }
+})
 const qualificationRule = computed(() => {
   const { knockoutSize, runnerUpCount } = qualification.value
   const groupCount = standings.value.length
@@ -43,9 +59,9 @@ const qualificationRule = computed(() => {
   return `各組第 1 名晉級 ${knockoutSize} 強淘汰賽`
 })
 
-function onSetResult(matchId, winnerSlot) {
+function onSetResult(matchId, winnerSlot, scores) {
   if (props.locked) return
-  emit('set-result', matchId, winnerSlot)
+  emit('set-result', matchId, winnerSlot, scores)
 }
 
 function onUpdateScore(matchId, scoreA, scoreB) {
@@ -80,10 +96,25 @@ function onUpdateScore(matchId, scoreA, scoreB) {
       </div>
     </header>
 
-    <div class="prelim-groups">
-      <article v-for="group in groupViews" :key="group.label" class="prelim-group-card">
+    <div class="prelim-view-controls">
+      <div class="prelim-display-control" role="group" aria-label="呈現方式">
+        <span>呈現方式</span>
+        <button type="button" :class="{ active: displayMode === 'cards' }" :aria-pressed="displayMode === 'cards'" @click="displayMode = 'cards'">對戰卡</button>
+        <button type="button" :class="{ active: displayMode === 'table' }" :aria-pressed="displayMode === 'table'" @click="displayMode = 'table'">交叉對戰表</button>
+      </div>
+      <label class="prelim-group-filter">
+        小組
+        <select v-model="selectedGroup">
+          <option value="all">全部</option>
+          <option v-for="group in groupViews" :key="group.groupIndex" :value="String(group.groupIndex)">{{ group.label }} 組</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="prelim-groups" :class="{ 'cross-table-mode': displayMode === 'table' }">
+      <article v-for="group in visibleGroups" :key="group.label" class="prelim-group-card">
         <h3>{{ group.label }} 組</h3>
-        <div class="prelim-matches">
+        <div v-if="displayMode === 'cards'" class="prelim-matches">
           <MatchCard
             v-for="match in group.matches"
             :key="match.id"
@@ -93,6 +124,15 @@ function onUpdateScore(matchId, scoreA, scoreB) {
             @update-score="onUpdateScore"
           />
         </div>
+        <PrelimCrossTable
+          v-else
+          :player-ids="group.playerIds"
+          :matches="group.matches"
+          :player-map="playerMap"
+          :locked="locked"
+          @set-result="onSetResult"
+          @update-score="onUpdateScore"
+        />
         <table class="prelim-standings">
           <thead>
             <tr>
