@@ -41,6 +41,15 @@ export function resolveCustomPrelimGroupSizeInput(value, playerCount) {
   }
 }
 
+// 輸入框的自訂值原本被擋下、因人數變動才自動生效時的提示；
+// 使用者自己輸入（人數未變）、原本就合法或仍不合法時回傳空字串
+export function getAutoAppliedPrelimGroupSizeNotice({ value, wasBlocked, previousPlayerCount, playerCount }) {
+  if (!wasBlocked || previousPlayerCount === playerCount) return ''
+  const { size } = resolveCustomPrelimGroupSizeInput(value, playerCount)
+  if (size === null) return ''
+  return `人數已達 ${playerCount} 人，自訂每組 ${size} 人已套用`
+}
+
 export function getPrelimGroupCount(playerCount, groupSize) {
   return Math.max(1, Math.round(playerCount / normalizePrelimGroupSize(groupSize, playerCount)))
 }

@@ -13,6 +13,7 @@ import {
   validatePlayers,
 } from '../composables/useBracketEngine'
 import {
+  getAutoAppliedPrelimGroupSizeNotice,
   getPendingPrelimGroupSizeError,
   getPrelimPlan,
   PRELIM_GROUP_SIZE_OPTIONS,
@@ -54,6 +55,7 @@ const pendingPrelimGroupSizeError = computed(() =>
 )
 const customPrelimGroupSize = ref(String(selectedPrelimGroupSize.value))
 const customPrelimGroupSizeError = ref('')
+const prelimGroupSizeNotice = ref('')
 const prelimGroupSizeMessage = computed(
   () => customPrelimGroupSizeError.value || pendingPrelimGroupSizeError.value,
 )
@@ -137,12 +139,36 @@ const firstRoundPreviewText = computed(() => {
 
 watch(
   () => props.bracket.players.length,
-  (count) => {
+  (count, previousCount) => {
     playerCount.value = count
+    // 人數再變動時舊提示的人數已不準確，先清掉
+    prelimGroupSizeNotice.value = ''
+    if (!customPrelimGroupSizeError.value) {
+      // 已存好的自訂值在舊人數下待生效、新人數下合法：normalizeBracket 已自動套用，這裡只補顯示提示、不必 emit
+      const stored = props.bracket.prelimCustomGroupSize
+      if (
+        stored != null &&
+        getPendingPrelimGroupSizeError(stored, previousCount) &&
+        !getPendingPrelimGroupSizeError(stored, count)
+      ) {
+        prelimGroupSizeNotice.value = getAutoAppliedPrelimGroupSizeNotice({
+          value: String(stored),
+          wasBlocked: true,
+          previousPlayerCount: previousCount,
+          playerCount: count,
+        })
+      }
+      return
+    }
     // 先前被擋下、仍顯示在輸入框的自訂值：人數變動後重新判斷，合法就套用，避免顯示值與實際值不一致
-    if (!customPrelimGroupSizeError.value) return
     const { size, error } = resolveCustomPrelimGroupSizeInput(customPrelimGroupSize.value, count)
     customPrelimGroupSizeError.value = error
+    prelimGroupSizeNotice.value = getAutoAppliedPrelimGroupSizeNotice({
+      value: customPrelimGroupSize.value,
+      wasBlocked: true,
+      previousPlayerCount: previousCount,
+      playerCount: count,
+    })
     if (size !== null) emit('set-prelim-group-size', size)
   },
 )
@@ -151,6 +177,13 @@ watch(selectedPrelimGroupSize, (size) => {
   customPrelimGroupSize.value = String(size)
   customPrelimGroupSizeError.value = ''
 })
+
+watch(
+  () => props.bracket.format,
+  () => {
+    prelimGroupSizeNotice.value = ''
+  },
+)
 
 const validationErrors = computed(() => validatePlayers(props.bracket.players))
 
@@ -161,12 +194,14 @@ function applyPlayerCount() {
 function selectPrelimGroupSize(size) {
   customPrelimGroupSize.value = String(size)
   customPrelimGroupSizeError.value = ''
+  prelimGroupSizeNotice.value = ''
   emit('set-prelim-group-size', size)
 }
 
 function applyCustomPrelimGroupSize(event) {
   const value = event.target.value
   customPrelimGroupSize.value = value
+  prelimGroupSizeNotice.value = ''
   const { size, error } = resolveCustomPrelimGroupSizeInput(value, props.bracket.players.length)
   customPrelimGroupSizeError.value = error
   if (size !== null) emit('set-prelim-group-size', size)
@@ -301,7 +336,7 @@ function closeCsvColumnPicker() {
               約 {{ size }} 人
             </button>
           </div>
-          <label class="prelim-custom-size" :class="{ active: !PRELIM_GROUP_SIZE_OPTIONS.includes(bracket.prelimGroupSize) }">
+          <label class="prelim-custom-size" :class="{ active: !PRELIM_GROUP_SIZE_OPTIONS.includes(selectedPrelimGroupSize) }">
             <span>自訂</span>
             <input
               :value="customPrelimGroupSize"
@@ -317,6 +352,9 @@ function closeCsvColumnPicker() {
         </div>
         <p v-if="prelimGroupSizeMessage" id="prelim-custom-size-error" class="prelim-custom-size-error" role="alert">
           {{ prelimGroupSizeMessage }}
+        </p>
+        <p v-else-if="prelimGroupSizeNotice" class="format-settings-hint" role="status">
+          {{ prelimGroupSizeNotice }}
         </p>
         <p class="format-settings-hint">
           各組打完循環賽後，第 1 名（不足時補成績最佳的第 2 名）晉級淘汰賽。
