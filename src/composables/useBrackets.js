@@ -20,7 +20,10 @@ import {
 import {
   createPrelimGroups,
   createPrelimKnockoutSlots,
+  getPendingPrelimGroupSizeError,
   getPrelimQualification,
+  isValidCustomPrelimGroupSize,
+  normalizePrelimCustomGroupSize,
   normalizePrelimGroupSize,
 } from './usePrelimEngine'
 
@@ -64,6 +67,7 @@ function createBracket(overrides = {}) {
     pairingMode: 'order',
     format: DEFAULT_BRACKET_FORMAT,
     prelimGroupSize: 3,
+    prelimCustomGroupSize: null,
     prelim: null,
     freeSlotCount: 8,
     byeSlots: [],
@@ -109,7 +113,13 @@ function normalizeBracket(bracket) {
   normalized.bracketSize = normalized.slots.length || normalized.bracketSize || normalized.players.length
   normalized.groupCount = normalizeGroupCount(normalized.groupCount, normalized.players.length)
   normalized.format = normalizeFormat(bracket?.format)
-  normalized.prelimGroupSize = normalizePrelimGroupSize(bracket?.prelimGroupSize, players.length)
+  // 自訂值獨立保存（舊資料由 prelimGroupSize 推得），人數暫時不足時不會被覆蓋成 3，人數恢復後自動套用
+  normalized.prelimCustomGroupSize = normalizePrelimCustomGroupSize(
+    bracket?.prelimCustomGroupSize ?? bracket?.prelimGroupSize,
+  )
+  normalized.prelimGroupSize = isValidCustomPrelimGroupSize(normalized.prelimCustomGroupSize, players.length)
+    ? normalized.prelimCustomGroupSize
+    : normalizePrelimGroupSize(bracket?.prelimGroupSize, players.length)
   normalized.prelim =
     bracket?.prelim && Array.isArray(bracket.prelim.groups) && bracket.prelim.groups.length
       ? {
@@ -552,6 +562,7 @@ export function useBrackets() {
     updateCurrent((bracket) => ({
       ...bracket,
       prelimGroupSize: size,
+      prelimCustomGroupSize: normalizePrelimCustomGroupSize(size),
       status: 'setup',
       slots: [],
       results: {},
@@ -596,6 +607,8 @@ export function useBrackets() {
 
     if (bracket.format === 'prelim') {
       if (bracket.players.length < 3) return { ok: false, errors: ['預賽模式至少需要 3 位參賽者'] }
+      const groupSizeError = getPendingPrelimGroupSizeError(bracket.prelimCustomGroupSize, bracket.players.length)
+      if (groupSizeError) return { ok: false, errors: [groupSizeError] }
       const groups = createPrelimGroups(bracket.players, bracket.prelimGroupSize, pairingMode)
       persist({
         ...bracket,
